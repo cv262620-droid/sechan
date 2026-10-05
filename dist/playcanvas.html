@@ -1668,7 +1668,7 @@ async function createPlayCanvasAdapter(canvas, core) {
     // inside the mass, so wheel-zooming toward them would otherwise end with the camera inside the building.
     let massBoxes = [];
     function computeMassBoxes(mass) {
-        const PAD = 2;
+        const PAD = 4; // m: zoom stops a few metres off the facade / roof
         const boxes = [];
         const roofTop = mass.floors.length ? mass.floors[mass.floors.length - 1].y1 + 4.5 : 0;
         for (const kind of ['podium', 'tower']) {
@@ -1904,7 +1904,7 @@ async function createPlayCanvasAdapter(canvas, core) {
                 cur[key] = Math.abs(d) < 1e-5 ? goal[key] : cur[key] + d * k;
             }
         }
-        applyCamera(cur);
+        applyCamera(keepOutOfMass(cur)); // also covers tweens and a mass that just grew around the eye
     }
 
     // ---- input (pointer events; the UI's own click handling is never blocked) ----
