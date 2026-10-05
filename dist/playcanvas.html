@@ -1457,6 +1457,9 @@ async function createPlayCanvasAdapter(canvas, core) {
     const EL_MAX = 89.9;                      // degrees above horizon (top view)
     const EL_MIN = 2;                         // spec: polar angle <= 88 deg
     const DIST_MIN = 15, DIST_MAX = 900;
+    // shadow reach past the target (x dist x cos(elevation)): 0.8 keeps shadow edges near the subject about as
+    // sharp as the Babylon page's whole-city map; blocks > ~400 m from the camera fade out of shadow (view-fitted map)
+    const SD_K = 0.8;
     const FOV = 0.8 / DEG;                    // vertical, degrees (0.8 rad, same as the Babylon page)
     const reducedMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     // phones / tablets: smaller shadow map (window size, not window.screen: headless reports 800x600)
@@ -1867,7 +1870,7 @@ async function createPlayCanvasAdapter(canvas, core) {
         // Shadows fade out over the last 20 % of shadowDistance (cascadeBlend): keep the target and
         // its surroundings in front of that band (matters in the top view, where the ground sits at depth = dist).
         const light = sunEnt.light;
-        const sd = clamp(Math.max(s.dist * (1 + 1.2 * Math.cos(Math.max(0, s.el) * DEG)) + 100, (s.dist + 60) / 0.8), 150, 1400);
+        const sd = clamp(Math.max(s.dist * (1 + SD_K * Math.cos(Math.max(0, s.el) * DEG)) + 60, (s.dist + 60) / 0.8), 150, 1400);
         light.shadowDistance = sd;
         // normal-offset bias follows the shadow texel size (same sphere estimate PlayCanvas uses)
         const t = Math.tan((s.fov * DEG) / 2), aspect = device.width > 0 && device.height > 0 ? device.width / device.height : 1.6;
