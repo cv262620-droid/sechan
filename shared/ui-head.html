@@ -342,6 +342,10 @@ body { background: var(--ground); color: var(--ink); overflow: hidden; -webkit-t
     top: calc(var(--gutter) + var(--safe-t)); left: var(--gutter);
     right: calc(var(--gutter) + var(--compass) + 10px); width: auto;
   }
+  /* sheet open: the free canvas is short, so the card shrinks to its one-line title */
+  .app:has(.panel[data-expanded="true"]) .floor-card { padding-top: 6px; padding-bottom: 6px; align-items: center; }
+  .app:has(.panel[data-expanded="true"]) .fc-meta { display: none; }
+  .app:has(.panel[data-expanded="true"]) .fc-swatch { margin-top: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -127,21 +127,14 @@ async function createBabylonAdapter(canvas, core) {
 
     // ---------- framing: centre the subject in the part of the canvas the UI panel leaves free ----------
     // Lens shift (off-axis projection): only the image slides; the eye, the orbit pivot, picking rays and the
-    // compass heading stay exact, and the pedestrian eye never moves. Desktop: the left panel -> shift right by
-    // half its right edge. Phone: the bottom sheet -> shift up by half its height (eases on expand/collapse).
+    // compass heading stay exact, and the pedestrian eye never moves. The UI reports the covered strip through
+    // setViewInset({left, bottom}) (CSS px): shift right by left/2, up by bottom/2 (eases on sheet expand/collapse).
     const lens = { x: 0, y: 0, tx: 0, ty: 0 }; // current / goal shift in CSS px, +x = right, +y = up
+    const inset = { left: 0, bottom: 0 };
     function measureLens() {
-        lens.tx = 0; lens.ty = 0;
-        const panel = document.getElementById('panel');
-        if (!panel) return;
-        const c = canvas.getBoundingClientRect(), p = panel.getBoundingClientRect();
-        if (c.width < 1 || c.height < 1 || p.width < 1 || p.height < 1) return;
-        const left = p.left - c.left, right = p.right - c.left, top = p.top - c.top, bottom = p.bottom - c.top;
-        if (left < c.width * 0.25 && p.width < c.width * 0.5 && p.height > c.height * 0.4) {
-            lens.tx = clamp(right, 0, c.width * 0.5) / 2;                 // side panel on the left
-        } else if (p.width > c.width * 0.6 && bottom > c.height * 0.8 && top > c.height * 0.2) {
-            lens.ty = clamp(c.height - top, 0, c.height * 0.8) / 2;       // bottom sheet
-        }
+        const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight);
+        lens.tx = clamp(inset.left, 0, w * 0.5) / 2;
+        lens.ty = clamp(inset.bottom, 0, h * 0.8) / 2;
     }
     let lensBusy = false;
     camera.onProjectionMatrixChangedObservable.add((cam) => {
@@ -280,8 +273,50 @@ async function createBabylonAdapter(canvas, core) {
         massMesh.updateVerticesData(B.VertexBuffer.ColorKind, colors);
     }
 
+    // Boxes the orbit camera may not enter (podium / tower+roof AABBs, padded): the preset targets sit inside
+    // the mass, so zooming toward them would otherwise end inside the building. Same rule as the PlayCanvas page.
+    let massBoxes = [];
+    function computeMassBoxes(mass) {
+        const PAD = 4; // m: zoom stops a few metres off the facade / roof
+        const boxes = [];
+        const roofTop = mass.floors.length ? mass.floors[mass.floors.length - 1].y1 + 4.5 : 0;
+        for (const kind of ['podium', 'tower']) {
+            const fl = mass.floors.filter((f) => f.kind === kind);
+            if (!fl.length) continue;
+            const b = { x0: Infinity, x1: -Infinity, y1: -Infinity, z0: Infinity, z1: -Infinity };
+            for (const f of fl) {
+                for (const [e, n] of f.footprint) {
+                    b.x0 = Math.min(b.x0, e); b.x1 = Math.max(b.x1, e);
+                    b.z0 = Math.min(b.z0, -n); b.z1 = Math.max(b.z1, -n);
+                }
+                b.y1 = Math.max(b.y1, f.y1);
+            }
+            if (fl[fl.length - 1] === mass.floors[mass.floors.length - 1]) b.y1 = roofTop;
+            boxes.push({ lo: [b.x0 - PAD, -1e3, b.z0 - PAD], hi: [b.x1 + PAD, b.y1 + PAD, b.z1 + PAD] });
+        }
+        return boxes;
+    }
+    // Smallest radius >= r that puts the eye outside every box along the target->camera ray.
+    function radiusOutsideMass(o, u, r) {
+        for (let pass = 0; pass < 3; pass++) {
+            let moved = false;
+            for (const b of massBoxes) {
+                let t0 = -Infinity, t1 = Infinity;
+                for (let k = 0; k < 3; k++) {
+                    if (Math.abs(u[k]) < 1e-9) { if (o[k] < b.lo[k] || o[k] > b.hi[k]) { t0 = Infinity; break; } continue; }
+                    const a = (b.lo[k] - o[k]) / u[k], c = (b.hi[k] - o[k]) / u[k];
+                    t0 = Math.max(t0, Math.min(a, c)); t1 = Math.min(t1, Math.max(a, c));
+                }
+                if (t0 < t1 && r > t0 && r < t1) { r = t1; moved = true; }
+            }
+            if (!moved) break;
+        }
+        return r;
+    }
+
     function setMass(mass) {
         currentMass = mass;
+        massBoxes = computeMassBoxes(mass);
         const data = buildMassMesh(mass);
         if (massMesh) {
             shadowGen.removeShadowCaster(massMesh, false);
@@ -420,8 +455,29 @@ async function createBabylonAdapter(canvas, core) {
         stepTween();
         // keep the target on/above the ground
         if (camera.target.y < 0) camera.target.y = 0;
-        const r = Math.max(camera.radius, 1e-3);
         updateBetaLimit();
+        if (!tween) {
+            // eye stays >= 1.7 m above the outer terrain hills under it (the polar limit alone allows dipping into them)
+            const sb = Math.sin(camera.beta), t = camera.target;
+            const camE = t.x + camera.radius * Math.cos(camera.alpha) * sb, camN = -(t.z + camera.radius * Math.sin(camera.alpha) * sb);
+            const floorY = core.terrainHeight(camE, camN) + EYE_MIN_Y;
+            if (t.y + camera.radius * Math.cos(camera.beta) < floorY) {
+                const b = Math.acos(clamp((floorY - t.y) / Math.max(camera.radius, 1e-3), -1, 1));
+                camera.upperBetaLimit = Math.min(camera.upperBetaLimit, b);
+                if (camera.beta > b) { camera.beta = b; camera.inertialBetaOffset = 0; }
+            }
+        }
+        // never inside the planned building (also covers a mass that just grew around the eye)
+        if (massBoxes.length) {
+            const sb = Math.sin(camera.beta), t = camera.target;
+            const u = [Math.cos(camera.alpha) * sb, Math.cos(camera.beta), Math.sin(camera.alpha) * sb];
+            const rOut = radiusOutsideMass([t.x, t.y, t.z], u, camera.radius);
+            if (rOut > camera.radius) {
+                camera.radius = Math.min(rOut, camera.upperRadiusLimit);
+                if (camera.inertialRadiusOffset > 0) camera.inertialRadiusOffset = 0; // >0 = zooming in
+            }
+        }
+        const r = Math.max(camera.radius, 1e-3);
         // distance-scaled panning so the ground roughly follows the cursor at any zoom
         if (camera.movement) {
             const h = Math.max(1, canvas.clientHeight || engine.getRenderHeight());
@@ -459,8 +515,6 @@ async function createBabylonAdapter(canvas, core) {
         ro = new ResizeObserver(onLayout);
         ro.observe(canvas.parentElement || canvas);
         if (canvas.parentElement) ro.observe(canvas);
-        const panel = document.getElementById('panel');
-        if (panel) ro.observe(panel); // sheet expand/collapse, sections opening
     }
     window.addEventListener('resize', onLayout);
 
@@ -482,7 +536,7 @@ async function createBabylonAdapter(canvas, core) {
             meshFromGeom('markingsYellow', ctx.markingsYellow, MAT.markYellow, { receive: true });
             meshFromGeom('markingsWhite', ctx.markingsWhite, MAT.markWhite, { receive: true });
             meshFromGeom('siteFill', ctx.siteFill, MAT.siteFill, { receive: true });
-            meshFromGeom('siteBoundary', bandGeometry(ctx.siteOutline, 0.7, 0.01), MAT.siteLine);
+            meshFromGeom('siteBoundary', bandGeometry(ctx.siteOutline, 0.8, 0.01), MAT.siteLine);
             layers.context.push(meshFromGeom('buildings', ctx.buildings, MAT.building, { receive: true, cast: true }));
             layers.trees.push(meshFromGeom('trunks', ctx.trunks, MAT.trunk, { receive: true, cast: true }));
             layers.trees.push(meshFromGeom('crowns', ctx.crowns, MAT.crown, { receive: true, cast: true }));
@@ -512,6 +566,12 @@ async function createBabylonAdapter(canvas, core) {
         setMass,
         setSun,
         setView,
+
+        setViewInset(o) {
+            inset.left = Math.max(0, Number(o && o.left) || 0);
+            inset.bottom = Math.max(0, Number(o && o.bottom) || 0);
+            measureLens();
+        },
 
         setLayer(name, visible) {
             const v = !!visible;

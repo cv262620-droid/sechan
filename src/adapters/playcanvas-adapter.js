@@ -3,8 +3,8 @@
 // frame (right-handed, Y-up, x = east, z = -north, CCW front faces), so buffers go in unchanged.
 // Colour pipeline: StandardMaterial colours (and vertex colours, via vertexColorGamma) are sRGB and
 // get linearised; lighting runs in linear space; the camera applies TONEMAP_LINEAR (exposure 1, i.e.
-// none) and gamma-encodes (GAMMA_SRGB). Light levels below are tuned so a lit roof shows its spec
-// colour and shaded faces sit at ~0.68 of it (close to the Babylon page's gamma-space look).
+// none) and gamma-encodes (GAMMA_SRGB). Light levels are derived from the Babylon page's gamma-space
+// model (hemisphere sky 0.70 / walls 0.60, sun min(0.62, 0.32/sin alt)) so both pages match: see setSun.
 async function createPlayCanvasAdapter(canvas, core) {
     'use strict';
     const pc = window.pc;
@@ -18,17 +18,14 @@ async function createPlayCanvasAdapter(canvas, core) {
         siteLine: '#d2352b', building: '#eceae4', trunk: '#6b5a48', crown: '#6f8f5a',
         podium: '#c98d4b', tower: '#d9a35f', slab: '#5a4636', rooftop: '#b9b2a6', highlight: '#2f7de1',
     };
-    // Lighting, in linear units multiplying the (linearised) albedo.
-    const LIGHTING = {
-        sunK: 0.5, sunCap: 0.9,               // sun = min(cap, K / sin(alt)) -> lit roofs ~ spec colour
-        ambient: [0.395, 0.405, 0.425],       // sky + ground average: what a shaded wall gets
-        fill: [0.045, 0.05, 0.06],            // extra sky light on up-facing faces (hemisphere approx.)
-    };
+    // Reference lighting in *gamma space* (identical numbers on the Babylon page): hemisphere sky colour
+    // (up faces) and ground colour; a vertical wall gets their average. Converted to linear in setSun.
+    const HEMI = { sky: [0.68, 0.70, 0.73], ground: [0.52, 0.50, 0.47] };
     const EYE_MIN_Y = 1.7;                    // camera never below eye height
     const EL_MAX = 89.9;                      // degrees above horizon (top view)
     const EL_MIN = 2;                         // spec: polar angle <= 88 deg
     const DIST_MIN = 15, DIST_MAX = 900;
-    const FOV = 46;                           // vertical, degrees
+    const FOV = 0.8 / DEG;                    // vertical, degrees (0.8 rad, same as the Babylon page)
     const reducedMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     // phones / tablets: smaller shadow map (window size, not window.screen: headless reports 800x600)
     const smallScreen = () => (window.matchMedia && window.matchMedia('(pointer: coarse)').matches)
@@ -60,7 +57,7 @@ async function createPlayCanvasAdapter(canvas, core) {
     scene.clusteredLightingEnabled = false; // two directional lights only: plain forward lighting
     scene.exposure = 1;
     const sky = color(COLORS.sky);
-    const SKY_DAY = hexRgb(COLORS.sky), SKY_NIGHT = hexRgb('#3b4148');
+    const SKY_DAY = hexRgb(COLORS.sky);
     scene.fog.type = pc.FOG_LINEAR;
     scene.fog.color = sky.clone();
     scene.fog.start = 320;
@@ -233,7 +230,10 @@ async function createPlayCanvasAdapter(canvas, core) {
             parts.push({ g: f.slab, c: C.slab, level: f.level });
             parts.push({ g: f.body, c: f.kind === 'podium' ? C.podium : C.tower, level: f.level });
         }
-        parts.push({ g: mass.roofSlab, c: C.slab, level: null });
+        // roof slab: dark band on its edges like every slab, its top face in the top floor's body colour
+        // (same as the Babylon page) so the mass reads warm orange in the plan view
+        const topFloor = mass.floors[mass.floors.length - 1];
+        parts.push({ g: mass.roofSlab, c: C.slab, cUp: topFloor && topFloor.kind === 'tower' ? C.tower : C.podium, level: null });
         parts.push({ g: mass.rooftop, c: C.rooftop, level: null });
         let nv = 0, ni = 0;
         for (const p of parts) { nv += p.g.positions.length / 3; ni += p.g.indices.length; }
@@ -245,7 +245,10 @@ async function createPlayCanvasAdapter(canvas, core) {
             const n = p.g.positions.length / 3;
             positions.set(p.g.positions, vo * 3);
             normals.set(p.g.normals, vo * 3);
-            for (let i = 0; i < n; i++) colors.set([p.c[0], p.c[1], p.c[2], 255], (vo + i) * 4);
+            for (let i = 0; i < n; i++) {
+                const c = p.cUp && p.g.normals[i * 3 + 1] > 0.5 ? p.cUp : p.c;
+                colors.set([c[0], c[1], c[2], 255], (vo + i) * 4);
+            }
             for (let i = 0; i < p.g.indices.length; i++) indices[io + i] = p.g.indices[i] + vo;
             if (p.level != null) {
                 const r = ranges.get(p.level);
@@ -337,21 +340,30 @@ async function createPlayCanvasAdapter(canvas, core) {
         sunUp = alt > 0;
         const dir = new pc.Vec3(v[0], v[1], v[2]).normalize();
         sunEnt.setRotation(new pc.Quat().setFromDirections(UP, dir));
-        const day = clamp(alt / 6, 0, 1);                   // fade in over the first 6 degrees
-        const warm = clamp((alt - 2) / 30, 0, 1);           // 0 = horizon (warm), 1 = high sun (neutral)
-        const tint = [1.0, 0.84 + 0.14 * warm, 0.70 + 0.27 * warm]; // linear multipliers
+        // Same gamma-space model as the Babylon page, converted so the *rendered* colours match:
+        // Babylon shows albedo_srgb x L_gamma; PlayCanvas shows albedo_srgb x L_linear^(1/2.2), so L_linear = L_gamma^2.2.
+        const day = clamp(alt / 6, 0, 1);                        // fade in over the first 6 degrees
+        const warm = clamp((alt - 2) / 20, 0, 1);                 // 0 = horizon (warm), 1 = high sun (neutral)
+        const tint = [1.0, 0.80 + 0.17 * warm, 0.62 + 0.30 * warm];
         const sinA = Math.max(0.05, Math.sin(Math.max(alt, 0) * DEG));
-        const I = sunUp ? Math.min(LIGHTING.sunCap, LIGHTING.sunK / sinA) * day : 0;
+        const Ib = sunUp ? Math.min(0.62, 0.32 / sinA) * day : 0; // Babylon sun intensity (gamma space)
+        const k = 0.42 + 0.58 * clamp(alt / 12, 0, 1);            // dimmer sky at dusk / night
+        const up = HEMI.sky.map((c) => c * k), wall = HEMI.sky.map((c, i) => (c + HEMI.ground[i]) / 2 * k);
+        const lin = (v) => Math.pow(Math.max(0, v), 2.2);
+        // ambient = what a vertical wall gets; the straight-down fill tops up-facing faces to the sky value
+        setAmbientLinear(wall.map(lin));
+        setLightLinear(fillEnt.light, up.map((c, i) => Math.max(0, lin(c) - lin(wall[i]))));
+        // sun: exact match on lit horizontal faces, per channel: (up + Ib.sin.tint)^2.2 - up^2.2 = sun_lin.sin
         sunEnt.enabled = sunUp;
-        if (sunUp) setLightLinear(sunEnt.light, tint.map((c) => c * I));
-        const k = 0.25 + 0.75 * clamp((alt + 2) / 14, 0, 1); // dimmer sky light at dusk / night
-        setAmbientLinear(LIGHTING.ambient.map((c) => c * k));
-        setLightLinear(fillEnt.light, LIGHTING.fill.map((c) => c * k));
-        // background + fog colour follow the sky so far hills still melt into it at dusk
-        const s = clamp((alt + 4) / 14, 0, 1);
-        const bg = new pc.Color(...SKY_NIGHT.map((c, i) => c + (SKY_DAY[i] - c) * s));
+        if (sunUp) setLightLinear(sunEnt.light, up.map((c, i) => (lin(c + Ib * sinA * tint[i]) - lin(c)) / sinA));
+        // background + fog colour follow the daylight so far hills still melt into it at dusk
+        const sk = 0.35 + 0.65 * clamp((alt + 4) / 14, 0, 1);
+        const bg = new pc.Color(...SKY_DAY.map((c) => c * sk));
         camEnt.camera.clearColor = bg;
         scene.fog.color = bg.clone();
+        // unlit parcel lines dim with the sky light
+        MAT.parcel.emissive = new pc.Color(...hexRgb(COLORS.parcel).map((c) => c * (0.45 + 0.55 * k)));
+        MAT.parcel.update();
         applyShadowState();
     }
 
@@ -380,27 +392,16 @@ async function createPlayCanvasAdapter(canvas, core) {
         return keepOutOfMass(s);
     }
     // ---- framing: keep the orbit target centred in the part of the canvas the UI panel leaves free ----
-    // (desktop side panel -> shift right; phone bottom sheet -> shift up). Uses the camera's lens shift
+    // The UI reports the covered strip through setViewInset({left, bottom}) in CSS px (desktop side panel ->
+    // shift right by left/2; phone bottom sheet -> shift up by bottom/2). Uses the camera's lens shift
     // (projectionOffset, half-frustum units), so position/heading/elevation stay exactly as the presets say.
-    const panelEl = document.getElementById('panel');
+    const inset = { left: 0, bottom: 0 };
     const shiftGoal = { x: 0, y: 0 }, shiftCur = { x: 0, y: 0 };
     const shiftVec = new pc.Vec2();
     function measureShift() {
-        shiftGoal.x = 0; shiftGoal.y = 0;
-        if (!panelEl) return;
-        const c = canvas.getBoundingClientRect(), p = panelEl.getBoundingClientRect();
-        const W = c.width, H = c.height;
-        if (W < 1 || H < 1 || p.width < 1 || p.height < 1) return;
-        let x0 = c.left, x1 = c.right, y0 = c.top, y1 = c.bottom;
-        // side panel anchored top-left (any height: sections may be collapsed) vs phone bottom sheet
-        const sidePanel = p.left - c.left < 0.2 * W && p.right - c.left < 0.75 * W && p.top - c.top < 0.3 * H;
-        const bottomSheet = !sidePanel && c.bottom - p.bottom < 0.15 * H && p.width > 0.6 * W && p.height < 0.8 * H;
-        if (sidePanel) x0 = Math.max(x0, p.right);
-        else if (bottomSheet) y1 = Math.min(y1, p.top);
-        else return;
-        const cx = (x0 + x1) / 2 - c.left, cy = (y0 + y1) / 2 - c.top;
-        shiftGoal.x = clamp(-(cx - W / 2) / (W / 2), -0.6, 0.6);
-        shiftGoal.y = clamp((cy - H / 2) / (H / 2), -0.6, 0.6);
+        const W = Math.max(1, canvas.clientWidth || 1), H = Math.max(1, canvas.clientHeight || 1);
+        shiftGoal.x = -clamp(inset.left, 0, W * 0.5) / W;   // NDC: (left/2) / (W/2)
+        shiftGoal.y = -clamp(inset.bottom, 0, H * 0.8) / H;
     }
     function stepShift(dt, instant) {
         const k = instant || reducedMotion() ? 1 : 1 - Math.exp(-dt * 10);
@@ -455,9 +456,11 @@ async function createPlayCanvasAdapter(canvas, core) {
                 return { tx: t[0], ty: t[1], tz: t[2], az: Math.atan2(dx, -dz) / DEG, el: Math.asin(dy / d) / DEG, dist: d, fov: 70 };
             }
             case 'top': {
-                const half = 110; // ~220 m across the shorter screen side
-                const d = half / (Math.tan(FOV * DEG / 2) * Math.min(1, aspect));
-                return { tx: 0, ty: 0, tz: 0, az: 180, el: EL_MAX, dist: d, fov: FOV };
+                // near-orthographic plan (same as the Babylon page): long lens from 600 m (850 m portrait) so
+                // walls barely lean; ~220 m across the shorter screen side
+                const half = 110, d = aspect >= 1 ? 600 : 850;
+                const fov = 2 * Math.atan(half / (d * Math.min(1, aspect))) / DEG;
+                return { tx: 0, ty: 0, tz: 0, az: 180, el: EL_MAX, dist: d, fov };
             }
             case 'north':
                 return { tx: 0, ty: 15, tz: 0, az: 0, el: 18, dist: 170 * portrait, fov: FOV };
@@ -608,7 +611,6 @@ async function createPlayCanvasAdapter(canvas, core) {
         ro = new ResizeObserver(resize);
         ro.observe(canvas.parentElement || canvas);
         if (canvas.parentElement) ro.observe(canvas);
-        if (panelEl) ro.observe(panelEl); // phone sheet expand/collapse, panel width changes
     }
     window.addEventListener('resize', resize);
 
@@ -654,6 +656,12 @@ async function createPlayCanvasAdapter(canvas, core) {
         setMass,
         setSun,
         setView,
+
+        setViewInset(o) {
+            inset.left = Math.max(0, Number(o && o.left) || 0);
+            inset.bottom = Math.max(0, Number(o && o.bottom) || 0);
+            measureShift();
+        },
 
         setLayer(name, visible) {
             const v = !!visible;

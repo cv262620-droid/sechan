@@ -394,6 +394,36 @@ function startApp(createAdapter) {
         canvas.addEventListener('wheel', () => markCustomView(), { passive: true });
     }
 
+    // ---------- view inset: tell the renderer which part of the canvas the panel covers ----------
+    // Desktop: the left side panel (inset.left = its right edge). Phone (<= 640 px): the bottom sheet
+    // (inset.bottom = its height over the canvas). Adapters lens-shift the image so the subject sits in the
+    // free area (docs/SPEC.md, setViewInset). Optional in the contract: skipped if the adapter lacks it.
+    const sheetQuery = window.matchMedia ? window.matchMedia('(max-width: 640px)') : null;
+    let lastInset = '';
+    function updateViewInset() {
+        if (!adapter || typeof adapter.setViewInset !== 'function' || !canvas) return;
+        const panel = $('panel');
+        const c = canvas.getBoundingClientRect(), p = panel ? panel.getBoundingClientRect() : null;
+        let left = 0, bottom = 0;
+        if (p && p.width > 0 && p.height > 0 && c.width > 0 && c.height > 0) {
+            if (sheetQuery && sheetQuery.matches) bottom = clamp(c.bottom - p.top, 0, c.height * 0.8);
+            else left = clamp(p.right - c.left, 0, c.width * 0.5);
+        }
+        const key = left.toFixed(1) + ',' + bottom.toFixed(1);
+        if (key === lastInset) return;
+        lastInset = key;
+        adapter.setViewInset({ left, bottom });
+    }
+    function bindViewInset() {
+        const onLayout = guard(updateViewInset);
+        if (window.ResizeObserver) {
+            const ro = new ResizeObserver(onLayout);
+            ro.observe(canvas);
+            if ($('panel')) ro.observe($('panel')); // sheet expand/collapse, sections opening
+        }
+        window.addEventListener('resize', onLayout);
+    }
+
     // ---------- boot ----------
     async function boot() {
         if (typeof SITE_CORE === 'undefined') throw new ReferenceError('SITE_CORE is not defined');
@@ -413,6 +443,8 @@ function startApp(createAdapter) {
         const slow = setTimeout(() => setText('splash-msg', '장면 생성 중… 시간이 걸리고 있습니다'), 20000);
         adapter = await createAdapter(canvas, core);
         if (!adapter || typeof adapter.init !== 'function') throw new Error('어댑터가 올바른 객체를 돌려주지 않았습니다.');
+        updateViewInset(); // before init: the first frame is already framed
+        bindViewInset();
         await adapter.init();
         clearTimeout(slow);
 
