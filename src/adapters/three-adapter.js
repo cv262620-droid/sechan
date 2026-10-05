@@ -14,8 +14,12 @@ async function createThreeAdapter(canvas, core) {
     'use strict';
     const THREE_URL = 'https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js';
     if (!window.__threeModulePromise) {
-        window.__threeModulePromise = import(THREE_URL).catch((err) => {
+        // a failed dynamic import stays in the module map (same error on every later import() of that URL), so a
+        // retry uses a new module-map key: the same URL plus a fragment (not sent: same request, same file)
+        const n = window.__threeImportFailures || 0;
+        window.__threeModulePromise = import(n ? THREE_URL + '#retry-' + n : THREE_URL).catch((err) => {
             window.__threeModulePromise = null; // allow a retry
+            window.__threeImportFailures = n + 1;
             throw new Error('three.js 모듈을 CDN에서 불러오지 못했습니다 (' + ((err && err.message) || err) + '). 네트워크에서 CDN에 접근할 수 있는지 확인하세요.');
         });
     }

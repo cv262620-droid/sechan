@@ -3642,8 +3642,9 @@ function create3DView(container, store, ctx) {
     let failed = null;       // { engine, hash, rev, error }
     let phase = 'idle';      // 'idle' | 'loading' | 'ready' | 'error'
     let loop = null;         // running build loop (promise)
-    let buildCount = 0, view = 'aerial', lastStatus = '';
+    let buildCount = 0, view = 'aerial', lastStatus = '', reason = 'first', lastTry = null;
     let wakeWaiters = [];
+    let changeWaiters = [];  // builds waiting on an engine download: woken when the wanted engine / site changes
     let pollTimer = 0, northRaf = 0, lastHeading = NaN;
 
     injectStyleOnce();
@@ -3699,6 +3700,7 @@ function create3DView(container, store, ctx) {
         if (st.ui.engine !== prev.ui.engine) renderBar();
         if (!!st.site.draft !== !!prev.site.draft) renderNotes();
         if (siteChanged || st.ui.engine !== prev.ui.engine) {
+            wakeChanged();
             if (active) ensure();       // rebuild now (or relabel when the polygon is unchanged)
             else renderStatus();        // rebuilt on the next activate()
         }
@@ -3736,6 +3738,7 @@ function create3DView(container, store, ctx) {
         deactivate();
         teardown();
         try { unsubscribe(); } catch (e) { /* ignore */ }
+        wakeChanged();
         if (ro) ro.disconnect(); else window.removeEventListener('resize', onLayout);
         const w = wakeWaiters; wakeWaiters = [];
         for (const f of w) f();
@@ -3783,40 +3786,64 @@ function create3DView(container, store, ctx) {
             return t0 < t1 ? t0 : null;
         }
         // Points that should stay visible: the site centre and each corner pulled 20 % toward it (a ray from
-        // right on the boundary would graze the neighbour across the parcel line).
+        // right on the boundary would graze the neighbour across the parcel line), on the ground.
         const probes = [[0, 0]].concat(site.map(([e, n]) => [e * 0.8, n * 0.8]));
-        // lowest camera elevation (deg) at azimuth az whose rays from every probe point pass over every context
-        // building within `reach`
-        function needEl(az, ty, reach) {
-            const d = [Math.sin(az * DEG), Math.cos(az * DEG)];
-            let need = -90;
-            for (const o of probes) {
-                for (const r of parts) {
-                    if (inside(o, r, 0)) continue;
-                    const t = hit(o, d, r, 0.5, reach);
-                    if (t != null) need = Math.max(need, Math.atan2(r.top - ty, Math.max(t, 2)) / DEG);
+        const dist = Math.max(240, R * 7);   // aerial distance (north: 170 m)
+        const near = parts.filter((r) => Math.hypot(Math.max(r.e0, Math.min(0, r.e1)), Math.max(r.n0, Math.min(0, r.n1))) < dist + 40);
+        // Does the sight line from ground point o to eye [e, n, up] pass through a context building (grown 0.5 m)?
+        // Exact 3D test against the eye the camera will really have: from a finite distance the far side of the
+        // site sees the eye lower than the camera elevation, so "elevation clears the roofs" alone is not enough.
+        function blocked(o, eye) {
+            const d = [eye[0] - o[0], eye[1] - o[1], eye[2] - PLAT];
+            for (const r of near) {
+                if (inside(o, r, 0)) continue;
+                const lo = [r.e0 - 0.5, r.n0 - 0.5, 0], hi = [r.e1 + 0.5, r.n1 + 0.5, r.top], oo = [o[0], o[1], PLAT];
+                let t0 = 0, t1 = 1, miss = false;
+                for (let k = 0; k < 3 && !miss; k++) {
+                    if (Math.abs(d[k]) < 1e-9) { miss = oo[k] < lo[k] || oo[k] > hi[k]; continue; }
+                    const a = (lo[k] - oo[k]) / d[k], c = (hi[k] - oo[k]) / d[k];
+                    t0 = Math.max(t0, Math.min(a, c)); t1 = Math.min(t1, Math.max(a, c));
                 }
+                if (!miss && t0 < t1) return true;
             }
-            return need;
+            return false;
+        }
+        const eyeAt = (az, el, ty, dist) => {
+            const c = Math.cos(el * DEG);
+            return [dist * Math.sin(az * DEG) * c, dist * Math.cos(az * DEG) * c, ty + dist * Math.sin(el * DEG)];
+        };
+        const hidden = (eye) => probes.reduce((k, o) => k + (blocked(o, eye) ? 1 : 0), 0);
+        // lowest elevation in [lo, hi] (2-degree steps) from which every probe sees the eye; when none does, the
+        // elevation that hides the fewest (lowest of equals)
+        function clearEl(az, ty, dist, lo, hi) {
+            let best = null;
+            for (let el = lo; el <= hi; el += 2) {
+                const k = hidden(eyeAt(az, el, ty, dist));
+                if (!best || k < best.k) best = { el, k };
+                if (!k) break;
+            }
+            return best;
         }
         const out = {};
         // aerial: prefer SSE (the presets' 150 deg, sunlit faces at 14:00); go steeper or turn only as needed
         let best = null;
         for (let az = 0; az < 360; az += 15) {
-            const el = Math.max(32, needEl(az, 0, 260) + 3);
-            const score = Math.min(el, 72) + (el > 65 ? 20 : 0) + 0.08 * angDiff(az, 150);
-            if (!best || score < best.score) best = { score, az, el: Math.min(el, 70) };
+            const c = clearEl(az, 0, dist, 32, 70);
+            const score = c.el + 25 * c.k + 0.08 * angDiff(az, 150);
+            if (!best || score < best.score) best = { score, az, el: c.el };
         }
-        out.aerial = { target: [0, 0, 0], azimuth: best.az, elevation: best.el, distance: Math.max(240, R * 7) };
-        out.north = { target: [0, 2, 0], azimuth: 0, elevation: Math.min(60, Math.max(18, needEl(0, 2, 200) + 3)), distance: 170 };
-        // pedestrian: eye 1.6 m above a street or sidewalk ~16 m outside the site's corner radius, no building between it and
-        // the site centre, as few street-tree crowns on the sight line as possible
+        out.aerial = { target: [0, 0, 0], azimuth: best.az, elevation: best.el, distance: dist };
+        out.north = { target: [0, 2, 0], azimuth: 0, elevation: clearEl(0, 2, 170, 18, 60).el, distance: 170 };
+        // pedestrian: eye 1.6 m above a street or its sidewalk (never a gap between buildings inside a block) ~16 m
+        // outside the site's corner radius, no building between it and the site centre, as much of the site in
+        // sight and as few street-tree crowns on the sight line as possible
+        const cores = D.blocks || [];
         let ped = null;
         for (let az = 0; az < 360; az += 15) {
             const d = [Math.sin(az * DEG), Math.cos(az * DEG)];
             for (let t = R + 6; t <= R + 70; t += 2) {
                 const p = [t * d[0], t * d[1]];
-                if (!roads.some((r) => inside(p, r, 0)) && !plats.some((r) => inside(p, r, 0))) continue; // streets / sidewalks only
+                if (!roads.some((r) => inside(p, r, 0)) || cores.some((r) => inside(p, r, 0))) continue; // streets / sidewalks only
                 if (parts.some((r) => inside(p, r, 1.5))) continue;
                 if (trees.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < 2.5)) continue;
                 const back = [-d[0], -d[1]];
@@ -3828,7 +3855,8 @@ function create3DView(container, store, ctx) {
                     if (u < R * 0.5 || u > t) continue;
                     if (Math.abs(q[0] * d[1] - q[1] * d[0]) < 2.2 * (q[2] || 1)) leafy++;
                 }
-                const score = Math.abs(t - (R + 16)) + 0.12 * angDiff(az, 135) + 8 * leafy;
+                const k = hidden([p[0], p[1], 1.75]);
+                const score = Math.abs(t - (R + 16)) + 0.12 * angDiff(az, 135) + 8 * leafy + 12 * k;
                 if (!ped || score < ped.score) ped = { score, az, t, p };
             }
         }
@@ -3865,6 +3893,8 @@ function create3DView(container, store, ctx) {
     const sameFailure = (w) => !!failed && failed.engine === w.engine && failed.hash === w.hash;
     const stale = (w) => disposed || (() => { const n = wanted(); return n.engine !== w.engine || n.hash !== w.hash; })();
     const waitActive = () => (active || disposed ? Promise.resolve() : new Promise((r) => wakeWaiters.push(r)));
+    const untilChanged = () => new Promise((r) => changeWaiters.push(r));
+    function wakeChanged() { const w = changeWaiters; changeWaiters = []; for (const f of w) f(); }
 
     function ensure() {
         if (!loop) {
@@ -3889,6 +3919,9 @@ function create3DView(container, store, ctx) {
     async function buildOnce(w) {
         const E = ENGINES[w.engine];
         buildCount++;
+        // what the loading card says it is rebuilding for: a new engine or a new site revision
+        reason = !lastTry ? 'first' : lastTry.engine !== w.engine ? 'engine' : lastTry.hash !== w.hash ? 'site' : 'again';
+        lastTry = { engine: w.engine, hash: w.hash };
         teardown();
         failed = null;
         phase = 'loading';
@@ -3903,9 +3936,12 @@ function create3DView(container, store, ctx) {
         let adapter = null, canvas = null;
         const t0 = performance.now();
         try {
-            await loadEngine(w.engine);
-            const engineMs = cached ? 0 : Math.round(performance.now() - t0);
+            // another engine (or site) picked while this one downloads: move on now instead of waiting for the
+            // download (up to LOAD_TIMEOUT_MS on a stalled CDN); the download itself goes on and stays cached
+            const job = loadEngine(w.engine);
+            while (!(await Promise.race([job.then(() => true), untilChanged().then(() => false)])) && !stale(w)) { /* same build still wanted */ }
             if (stale(w)) return;
+            const engineMs = cached ? 0 : Math.round(performance.now() - t0);
             if (!active) await waitActive();       // tab left while the engine loaded → build when it comes back
             if (stale(w)) return;
             await waitForSize();
@@ -4004,10 +4040,15 @@ function create3DView(container, store, ctx) {
     }
 
     // Same cache key as createThreeAdapter (window.__threeModulePromise), so the adapter reuses this download.
+    // A failed dynamic import stays in the document's module map (Chrome answers every later import() of that URL
+    // with the same error, without a request), so a retry imports under a new module-map key: same URL plus a
+    // fragment. The fragment is not sent, so the request (and the HTTP cache entry) is the same file.
     function loadThree(url) {
         if (!window.__threeModulePromise) {
-            window.__threeModulePromise = import(url).catch((err) => {
+            const n = window.__threeImportFailures || 0;
+            window.__threeModulePromise = import(n ? `${url}#retry-${n}` : url).catch((err) => {
                 window.__threeModulePromise = null; // allow a retry
+                window.__threeImportFailures = n + 1;
                 throw err;
             });
         }
@@ -4081,11 +4122,14 @@ function create3DView(container, store, ctx) {
         const s = built.adapter.stats ? built.adapter.stats() : {};
         const w = wanted();
         const pending = !upToDate(w) ? ` · r${w.rev} 반영 대기` : '';
-        statusEl.innerHTML =
-            `<b>채택 r${built.rev} 기준</b><span class="v3-sep">·</span>${esc(excludedText(built.excluded))}<span class="v3-sep">·</span>` +
-            `${esc(built.label)}<span class="v3-sep">·</span>로드 <span class="num">${fmt(built.engineMs)}</span> ms${built.cached ? '(재사용)' : ''}` +
-            `<span class="v3-sep">·</span>장면 <span class="num">${fmt(built.sceneMs)}</span> ms` +
-            `<span class="v3-sep">·</span>드로우콜 <span class="num" id="v3-draws">${Number.isFinite(s.drawCalls) ? fmt(s.drawCalls) : '—'}</span>${esc(pending)}`;
+        // items never break inside ("장면 / 1,087 ms" on a phone); the separators are the break points
+        const it = (html) => `<span class="v3-it">${html}</span>`;
+        statusEl.innerHTML = [
+            `<b>채택 r${built.rev} 기준</b>`, esc(excludedText(built.excluded)), it(esc(built.label)),
+            it(`로드 <span class="num">${fmt(built.engineMs)}</span> ms${built.cached ? '(재사용)' : ''}`),
+            it(`장면 <span class="num">${fmt(built.sceneMs)}</span> ms`),
+            it(`드로우콜 <span class="num" id="v3-draws">${Number.isFinite(s.drawCalls) ? fmt(s.drawCalls) : '—'}</span>${esc(pending)}`),
+        ].join('<span class="v3-sep">·</span>');
     }
 
     function renderNotes() {
@@ -4114,8 +4158,10 @@ function create3DView(container, store, ctx) {
 
     function showLoading(w, ex, step, engineMs) {
         const E = ENGINES[w.engine];
-        const rebuild = buildCount > 1;
-        const title = step === 'engine' ? `${E.name} ${E.version} 불러오는 중…` : rebuild ? `r${w.rev} 대지로 3D 장면 다시 만드는 중…` : '3D 장면 만드는 중…';
+        const title = step === 'engine' ? `${E.name} ${E.version} 불러오는 중…`
+            : reason === 'engine' ? `${E.name} 엔진으로 3D 장면 다시 만드는 중…`
+            : reason === 'site' ? `r${w.rev} 대지로 3D 장면 다시 만드는 중…`
+            : reason === 'again' ? '3D 장면 다시 만드는 중…' : '3D 장면 만드는 중…';
         const sub = step === 'engine'
             ? '엔진은 3D 탭을 처음 열 때 cdn.jsdelivr.net에서 한 번 받습니다. 그동안 다른 탭은 그대로 쓸 수 있습니다.'
             : '채택 대지, 주변 합성 건물·도로·필지, 원경 지형을 배치합니다. 초안은 넣지 않습니다.';
@@ -4214,7 +4260,8 @@ function create3DView(container, store, ctx) {
 .v3-foot{position:absolute;z-index:4;left:0;right:0;bottom:0;display:flex;flex-wrap:wrap;align-items:center;gap:3px 14px;min-height:26px;padding:4px 10px;
   background:color-mix(in srgb,var(--panel) 92%,transparent);border-top:1px solid var(--line);font-size:var(--fs-xs);color:var(--muted);line-height:1.45}
 .v3-status{color:var(--ink);min-width:0;overflow-wrap:anywhere;word-break:keep-all}
-.v3-status b{font-weight:600}
+.v3-status b{font-weight:600;white-space:nowrap}
+.v3-it{white-space:nowrap}
 .v3-status .num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
 .v3-sep{margin:0 6px;color:var(--line-strong)}
 .v3-notes{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin-left:auto;min-width:0}
@@ -4233,6 +4280,7 @@ function create3DView(container, store, ctx) {
 .v3-narrow .v3-foot{padding:4px 8px;gap:2px 10px}
 .v3-narrow .v3-notes{margin-left:0}
 .v3-narrow .v3-baked[data-off="false"]{display:none}
+@media (pointer:coarse){.v3-seg .btn{min-height:32px}.v3-sun{height:32px}}
 `;
         (document.head || document.documentElement).appendChild(st);
     }
@@ -5770,8 +5818,12 @@ async function createThreeAdapter(canvas, core) {
     'use strict';
     const THREE_URL = 'https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js';
     if (!window.__threeModulePromise) {
-        window.__threeModulePromise = import(THREE_URL).catch((err) => {
+        // a failed dynamic import stays in the module map (same error on every later import() of that URL), so a
+        // retry uses a new module-map key: the same URL plus a fragment (not sent: same request, same file)
+        const n = window.__threeImportFailures || 0;
+        window.__threeModulePromise = import(n ? THREE_URL + '#retry-' + n : THREE_URL).catch((err) => {
             window.__threeModulePromise = null; // allow a retry
+            window.__threeImportFailures = n + 1;
             throw new Error('three.js 모듈을 CDN에서 불러오지 못했습니다 (' + ((err && err.message) || err) + '). 네트워크에서 CDN에 접근할 수 있는지 확인하세요.');
         });
     }

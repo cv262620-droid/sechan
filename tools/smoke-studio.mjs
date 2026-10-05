@@ -6,7 +6,8 @@
 //   desktop-3d  every engine (studio-3d-<engine>.png), 6 engine switches from the toolbar, WebGL context churn
 //               (20 x create/dispose per adapter next to the live view), live layers, view buttons, a distant
 //               parcel (P150) adopted while 3D is open, pause while hidden, rebuild on activate, dispose
-//   3d-error    loading card (delayed engine script), blocked CDN → error card → 다시 시도
+//   3d-error    loading card (delayed engine script), blocked CDN → error card → 다시 시도 (PlayCanvas script,
+//               three.js dynamic import)
 // Fails on console errors, blocked external requests, horizontal overflow or a broken flow.
 // Usage: node tools/build.mjs studio && node tools/smoke-studio.mjs [scenario ...]   -> screenshots in .shots/studio-*.png
 import { chromium } from 'playwright';
@@ -240,6 +241,36 @@ async function run3DError({ page, S, check, shot, overflow, notes, blockedOnPurp
     const ok = await S(() => __studio.view('3D').debug());
     check(ok.phase === 'ready' && ok.engine === 'playcanvas' && ok.canvases === 1, `다시 시도 builds the scene ${JSON.stringify({ phase: ok.phase, engine: ok.engine })}`);
     await shot('studio-3d-retried');
+
+    // three.js is a dynamic import(): Chrome keeps a failed import in the module map, so 다시 시도 must not
+    // just import the same URL again (it would fail forever without a request)
+    blockedOnPurpose.add(ENGINE_URL.three);
+    await page.click('.v3-bar [data-engine="three"]');
+    await S(() => __studio.view('3D').whenIdle());
+    const t1 = await S(() => __studio.view('3D').debug());
+    check(t1.phase === 'error' && t1.canvases === 0 && !(await page.isHidden('.v3-msg [data-act="retry"]')), `three.js CDN blocked → error card ${JSON.stringify({ phase: t1.phase, error: t1.error })}`);
+    // CDN back but slow (5 s): 다시 시도 shows the three.js loading card; picking Babylon.js meanwhile builds Babylon
+    // right away instead of waiting for the three.js download
+    blockedOnPurpose.delete(ENGINE_URL.three);
+    delayed.set(ENGINE_URL.three, 5000);
+    await page.click('.v3-msg [data-act="retry"]');
+    await page.waitForTimeout(500);
+    const slow = await page.textContent('.v3-msg h2');
+    check(/three\.js 0\.186\.1 불러오는 중/.test(slow || ''), `three.js retry → loading card (${slow})`);
+    const tSwitch = Date.now();
+    await page.click('.v3-bar [data-engine="babylon"]');
+    await S(() => __studio.view('3D').whenIdle());
+    const bMs = Date.now() - tSwitch;
+    const b = await S(() => Object.assign(__studio.view('3D').debug(), { threeLoaded: !!window.__threeModuleReady }));
+    check(b.phase === 'ready' && b.engine === 'babylon' && b.canvases === 1 && !b.threeLoaded, `engine picked during a slow download builds before that download ends (${bMs} ms, ${b.engine} ${b.phase}, three loaded: ${b.threeLoaded})`);
+    await page.click('.v3-bar [data-engine="three"]');
+    await S(() => __studio.view('3D').whenIdle());
+    delayed.delete(ENGINE_URL.three);
+    await page.waitForTimeout(800);
+    const t2 = await S(() => __studio.view('3D').debug());
+    check(t2.phase === 'ready' && t2.engine === 'three' && t2.canvases === 1, `three.js 다시 시도 after the CDN is back ${JSON.stringify({ phase: t2.phase, engine: t2.engine, error: t2.error })}`);
+    notes.push(`three.js: blocked → error card → slow retry (Babylon.js picked meanwhile: ready in ${bMs} ms) → three.js ready`);
+    check(expectedFailures.length === 2, `exactly the two deliberate engine failures (${expectedFailures.length})`);
 }
 
 const browser = await chromium.launch({
@@ -259,6 +290,7 @@ const scenarios = only.length ? allScenarios.filter((x) => only.includes(x.id)) 
 const ENGINE_URL = {
     babylon: 'https://cdn.jsdelivr.net/npm/babylonjs@9.29.0/babylon.js',
     playcanvas: 'https://cdn.jsdelivr.net/npm/playcanvas@2.23.0/build/playcanvas.min.js',
+    three: 'https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js',
 };
 let failed = false;
 
