@@ -1709,7 +1709,7 @@ vec3 combineColor(vec3 albedo, vec3 sheenSpecularity, float clearcoatSpecularity
 
     function rebuildMassEntity() {
         if (massEntity) { massEntity.destroy(); massEntity = null; } // destroys mesh instances + GPU buffers
-        if (!massData) return;
+        if (!massData || !massData.positions.length) return;        // empty mass (no floors): no entity
         let colors32 = massData.colors;
         const r = highlightLevel != null ? massData.ranges.get(highlightLevel) : null;
         if (r) {
@@ -1832,13 +1832,15 @@ vec3 combineColor(vec3 albedo, vec3 sheenSpecularity, float clearcoatSpecularity
         for (let di = 0; di <= 1; di++) for (let dj = 0; dj <= 1; dj++) h = Math.max(h, core.terrainHeight(E0 + (i + di) * G, N0 + (j + dj) * G));
         return h;
     }
+    function eyeFloor(s) {
+        const ce = Math.cos(Math.max(s.el, 0) * DEG);
+        const camE = s.tx + s.dist * Math.sin(s.az * DEG) * ce, camN = -(s.tz - s.dist * Math.cos(s.az * DEG) * ce);
+        return Math.max(EYE_MIN_Y, groundUnder(camE, camN) + EYE_MIN_Y);
+    }
     function minElevation(s) {
         // allow looking up from below the target only while the eye stays above EYE_MIN_Y over the
         // ground under the camera (the outer terrain rises into hills beyond the city blocks)
-        const ce = Math.cos(Math.max(s.el, 0) * DEG);
-        const camE = s.tx + s.dist * Math.sin(s.az * DEG) * ce, camN = -(s.tz - s.dist * Math.cos(s.az * DEG) * ce);
-        const floorY = Math.max(EYE_MIN_Y, groundUnder(camE, camN) + EYE_MIN_Y);
-        const sEye = clamp((floorY - s.ty) / Math.max(s.dist, 1e-3), -1, 1);
+        const sEye = clamp((eyeFloor(s) - s.ty) / Math.max(s.dist, 1e-3), -1, 1);
         return Math.max(Math.min(EL_MIN, Math.max(-60, Math.asin(sEye) / DEG)), Math.asin(sEye) / DEG);
     }
     function constrain(s) {
@@ -1847,6 +1849,10 @@ vec3 combineColor(vec3 albedo, vec3 sheenSpecularity, float clearcoatSpecularity
         s.tx = clamp(s.tx, -1000, 1000);
         s.tz = clamp(s.tz, -1000, 1000);
         s.el = clamp(s.el, minElevation(s), EL_MAX);
+        // target panned out under a hill deeper than the orbit distance: even looking straight down the eye would
+        // sit inside the hill, so back the eye out instead (zoom-in stops at the hillside; same rule as three.js)
+        const floorY = eyeFloor(s), sinEl = Math.sin(s.el * DEG);
+        if (sinEl > 0.5 && s.ty + s.dist * sinEl < floorY) s.dist = Math.min(DIST_MAX, (floorY - s.ty) / sinEl + 0.01);
         return keepOutOfMass(s);
     }
     // ---- framing: keep the orbit target centred in the part of the canvas the UI panel leaves free ----
@@ -1928,8 +1934,19 @@ vec3 combineColor(vec3 albedo, vec3 sheenSpecularity, float clearcoatSpecularity
         }
     }
 
-    function setView(name) {
+    // Optional framing override (docs/SPEC.md): { target:[x,y,z], azimuth, elevation, distance, fov } in engine
+    // coordinates / degrees / metres replaces those preset fields (e.g. a site-aware aerial in the Studio).
+    function applyOverride(to, o) {
+        if (Array.isArray(o.target) && o.target.length === 3 && o.target.every(Number.isFinite)) [to.tx, to.ty, to.tz] = o.target;
+        if (Number.isFinite(o.azimuth)) to.az = o.azimuth;
+        if (Number.isFinite(o.elevation)) to.el = clamp(o.elevation, -60, EL_MAX);
+        if (Number.isFinite(o.distance)) to.dist = clamp(o.distance, DIST_MIN, DIST_MAX);
+        if (Number.isFinite(o.fov)) to.fov = clamp(o.fov, 5, 120);
+        return to;
+    }
+    function setView(name, override) {
         const to = presetState(name);
+        if (override) applyOverride(to, override);
         // presets bypass the generic limits (pedestrian dist/elevation are deliberate)
         if (reducedMotion()) {
             tween = null;
@@ -2051,10 +2068,12 @@ vec3 combineColor(vec3 albedo, vec3 sheenSpecularity, float clearcoatSpecularity
 
     // ---------- frame loop hooks ----------
     let firstFrameResolve = null, framesRendered = 0;
+    let paused = false, initPending = false;  // pause(): no rAF / update / render until resume()
     app.on('update', (dt) => updateCamera(dt));
     app.on('frameend', () => {
         framesRendered++;
-        if (firstFrameResolve && framesRendered >= 2) { const f = firstFrameResolve; firstFrameResolve = null; f(); }
+        if (firstFrameResolve && framesRendered >= 2) { const f = firstFrameResolve; firstFrameResolve = null; initPending = false; f(); }
+        if (paused && !initPending) pc.AppBase.cancelTick(app); // the next frame is already queued: cancel it
     });
 
     // ---------- resize ----------
@@ -2107,6 +2126,7 @@ vec3 combineColor(vec3 albedo, vec3 sheenSpecularity, float clearcoatSpecularity
             applyCamera(cur);
 
             const first = new Promise((resolve) => { firstFrameResolve = resolve; });
+            initPending = true;
             if (!started) { started = true; app.start(); }
             await first;
         },
@@ -2163,10 +2183,29 @@ vec3 combineColor(vec3 albedo, vec3 sheenSpecularity, float clearcoatSpecularity
                 }
             }
             const st = app.stats;
-            return { fps: st.frame.fps, drawCalls: st.drawCalls.total, triangles: tris };
+            // frames: frames drawn since creation (stops increasing while paused)
+            return { fps: paused ? 0 : st.frame.fps, drawCalls: st.drawCalls.total, triangles: tris, frames: framesRendered };
+        },
+
+        // Optional (docs/SPEC.md): stop the frame loop entirely while the view is hidden; resume() restarts it.
+        // Idempotent. A pause during init() takes effect right after the first frame (init still resolves).
+        pause() {
+            if (paused) return;
+            paused = true;
+            if (started && !initPending) pc.AppBase.cancelTick(app);
+        },
+        resume() {
+            if (!paused) return;
+            paused = false;
+            if (started && !app.frameRequestId) app.requestAnimationFrame(); // dt is clamped to app.maxDeltaTime
         },
 
         dispose() {
+            paused = true;
+            // app.destroy() drops the GL objects but keeps the context alive until garbage collection: lose it
+            // explicitly so repeated create/dispose never hits the browser's active-context limit
+            const gl = device.gl;
+            const lose = gl && !gl.isContextLost() ? gl.getExtension('WEBGL_lose_context') : null;
             canvas.removeEventListener('pointerdown', onPointerDown);
             canvas.removeEventListener('pointermove', onPointerMove);
             canvas.removeEventListener('pointerup', onPointerUp);
@@ -2177,6 +2216,8 @@ vec3 combineColor(vec3 albedo, vec3 sheenSpecularity, float clearcoatSpecularity
             window.removeEventListener('resize', resize);
             if (ro) ro.disconnect();
             app.destroy();
+            if (lose) lose.loseContext();
+            if (firstFrameResolve) { const f = firstFrameResolve; firstFrameResolve = null; f(); }
         },
 
         // debug handles (not part of the contract)

@@ -535,7 +535,7 @@ const STUDIO_CORE = (function () {
         return { polygon: poly, closed: !!closed, source, baseRev, validation: validate(poly, { closed: !!closed }), history: history || [], future: future || [] };
     }
 
-    const TABS = ['MAP', '2D', '3D'], ENGINES = ['babylon', 'playcanvas'], TOOLS = ['select', 'draw'];
+    const TABS = ['MAP', '2D', '3D'], ENGINES = ['babylon', 'playcanvas', 'three'], TOOLS = ['select', 'draw'];
     const LAYERS = ['boundary', 'roads', 'parcels', 'context', 'terrain'];
     const SOURCES = ['SYNTHETIC_SAMPLE', 'DIRECT', 'PARCEL', 'RESTORE'];
     const MODES = ['SYNTHETIC', 'USER_PROVIDED'];

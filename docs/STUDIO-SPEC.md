@@ -13,7 +13,7 @@ V2-M01 대지 생성(M01-01 직접 경계 작성, §5 Workflow, §6 UI 역할, �
 | 채택 전 검사(M01 §8): 폐합 실패·자기교차·0면적·NaN·꼭짓점 3개 미만·중복 꼭짓점·극소 변 | DXF/DWG 불러오기, 주소·공공데이터 조회 |
 | Preview → 취소/채택 → 새 siteRevision. 이전 리비전 보존, "이 리비전으로 복원" = 새 리비전 생성(C00-05) | 서버 Revision·충돌 처리 |
 | MAP: 합성 도로·블록·필지·주변 건물을 위경도로 배치(MapLibre GL JS 5.24.0, 배경지도 없음), 필지 클릭 → Inspector → "이 필지로 대지 초안 만들기" | 실제 배경지도 타일(아티팩트 CSP가 외부 fetch 차단) |
-| 3D: 채택된 대지 + 주변 합성 건물·도로·원경 지형의 기초 3D. 엔진은 3D 탭을 처음 열 때 로드(Babylon.js 기본, PlayCanvas 선택) | 정밀 지형(M01-04 후속), 매스(M03 모듈) |
+| 3D(구현): 채택된 대지 + 주변 합성 건물·가로수·도로·필지·원경 지형의 기초 3D. 엔진은 3D 탭을 처음 열 때 로드(Babylon.js 기본, PlayCanvas·three.js 선택). 대지와 겹치는 기존 합성 건물은 빼고 그 수를 표시. 태양은 춘·추분 14:00 고정 | 정밀 지형(M01-04 후속), 매스(M03 모듈 — 3D는 빈 매스), 일영 시각 조절, 3D에서 대지 편집·선택. 대지경계·도로·필지 레이어 토글은 3D에 적용 안 됨(바닥 장면에 포함, 화면에 표시) |
 | 브라우저 임시본(localStorage) + JSON 복사/붙여넣기 | 서버 저장. 화면에 "저장됨"이라 쓰지 않는다(C00-04: 서버 확인 Revision만 저장됨) |
 
 ## 데이터 표시 규칙(위키 원칙)
@@ -34,7 +34,8 @@ V2-M01 대지 생성(M01-01 직접 경계 작성, §5 Workflow, §6 UI 역할, �
 | `src/studio/app.js` | 부팅, 탭·뷰 레지스트리, LEFT/TOP/RIGHT/BOTTOM, 단축키, `window.__studio` 테스트 API | ui |
 | `src/studio/plan2d.js` | `createPlanView(container, store, ctx)` — Canvas2D 대지 도면 편집기 | ui |
 | `src/studio/map.js` | `createMapView(container, store, ctx)` — MapLibre 지연 로드 | map |
-| `src/studio/view3d.js` | `create3DView(container, store, ctx)` — 엔진 지연 로드 + 어댑터 | 3D (2단계) |
+| `src/studio/view3d.js` | `create3DView(container, store, ctx)` — 엔진 지연 로드 + 어댑터, 툴바·상태줄, 대지별 시점 계산 | 3D |
+| `src/adapters/{babylon,playcanvas,three}-adapter.js` | 매스 스터디와 같은 렌더러 어댑터(docs/SPEC.md 계약). Studio는 `pause/resume`, 빈 매스, `setView(name, override)`를 쓴다 | 3D |
 | `tools/smoke-studio.mjs` | 헤드리스 시험: 탭별 스크린샷·편집 시나리오·모바일 | ui |
 
 페이지 조립(`src/studio.html`):
@@ -42,12 +43,14 @@ V2-M01 대지 생성(M01-01 직접 경계 작성, §5 Workflow, §6 UI 역할, �
 <title>OHSOLV Studio 대지 캔버스</title>
 <!--@include src/studio/head.html-->
 <!--@include src/studio/body.html-->
-<script data-inline="shared/scene-data.js,shared/scene-core.js,shared/studio-core.js,src/studio/plan2d.js,src/studio/map.js,src/studio/view3d.js,src/adapters/babylon-adapter.js,src/adapters/playcanvas-adapter.js,src/studio/app.js"></script>
+<script data-inline="shared/scene-data.js,shared/scene-core.js,shared/studio-core.js,src/studio/plan2d.js,src/studio/map.js,src/studio/view3d.js,src/adapters/babylon-adapter.js,src/adapters/playcanvas-adapter.js,src/adapters/three-adapter.js,src/studio/app.js"></script>
 ```
-(1단계에서는 view3d.js와 어댑터 줄이 없을 수 있다. 없는 파일은 넣지 않는다 — build가 실패한다.)
-엔진·지도 라이브러리는 **동적 `<script>` 주입**으로 필요할 때 로드한다:
-`https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.js`, `https://cdn.jsdelivr.net/npm/babylonjs@9.29.0/babylon.js`, `https://cdn.jsdelivr.net/npm/playcanvas@2.23.0/build/playcanvas.min.js`.
-`tools/smoke.mjs`의 라우팅처럼 시험에서는 이 URL을 `node_modules`로 대체한다.
+(`window.create3DView`가 있으면 app.js의 3D 자리표시 카드는 쓰이지 않는다. 없는 파일은 넣지 않는다 — build가 실패한다.)
+엔진·지도 라이브러리는 **필요할 때** 로드한다. MapLibre·Babylon.js·PlayCanvas는 동적 `<script>` 주입(공용 캐시 로더 `window.__loadScript`),
+three.js는 ESM 전용이라 동적 `import()`(three 어댑터와 같은 캐시 `window.__threeModulePromise`):
+`https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.js`, `https://cdn.jsdelivr.net/npm/babylonjs@9.29.0/babylon.js`,
+`https://cdn.jsdelivr.net/npm/playcanvas@2.23.0/build/playcanvas.min.js`, `https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js`.
+`tools/smoke.mjs`의 라우팅처럼 시험에서는 이 URL을 `node_modules`로 대체한다(CORS 헤더 포함 — 모듈 import에 필요).
 
 ## STUDIO_CORE API (shared/studio-core.js)
 
@@ -85,7 +88,7 @@ state = {
   },
   selection: null | { kind:'vertex', i } | { kind:'edge', i } | { kind:'parcel', id } | { kind:'building', id } | { kind:'site' },
   layers: { boundary:true, roads:true, parcels:true, context:true, terrain:true },
-  ui: { tab:'2D', engine:'babylon', tool:'select'|'draw' },
+  ui: { tab:'2D', engine:'babylon'|'playcanvas'|'three', tool:'select'|'draw' },
   persistence: 'none'|'local-temp',   // 서버 저장 없음
 }
 store.getState(); store.subscribe(fn) → unsubscribe
@@ -130,10 +133,41 @@ MAP(map.js)
 - 우측 하단 안내: "합성 데이터 · 배경지도 없음(아티팩트 보안 정책) · 기준점 37.5665N 126.9780E는 실제 필지와 무관".
 - NavigationControl, ScaleControl(미터). 활성화 시 대지에 맞춤. 비활성 시 resize/애니메이션 중지, 재활성 시 `map.resize()`.
 
-3D(view3d.js, 2단계)
-- 탭 활성 시 선택 엔진 스크립트를 지연 로드 → `createXxxAdapter(canvas, STUDIO_CORE.makeEngineCore(채택 대지))` → `init()` → `setMass(emptyMass)` → 태양(춘·추분 14:00) → `aerial`.
-- 리비전이 바뀌면 다음 활성화 때(또는 활성 중이면 즉시) 어댑터를 dispose 후 재생성. 탭 비활성 시 렌더 정지(`pause()` 있으면 사용, 없으면 dispose).
-- 엔진 선택(Babylon.js / PlayCanvas)과 로드 시간·드로우콜 표시. "채택된 리비전 r{n} 기준" 표시(초안은 3D에 반영 안 함).
+3D(view3d.js) — 구현됨
+- 처음 활성화: 디자인된 로딩 카드("Babylon.js 9.29.0 불러오는 중…" → "3D 장면 만드는 중…", 기준 리비전·제외 건물 수·엔진·태양 표시) →
+  선택 엔진 지연 로드(Babylon/PlayCanvas = `window.__loadScript`, three = `import()`) → 새 `<canvas>` →
+  `createXxxAdapter(canvas, STUDIO_CORE.makeEngineCore(채택 대지))` → `init()` → `setMass(emptyMass(채택 대지))` →
+  태양 춘·추분(3/20) 14:00(`solarPosition` + `sunVector`) → `setView('aerial', 대지별 시점)` → 레이어 적용.
+  엔진 로드 ms와 장면 준비 ms(어댑터 생성부터 첫 프레임까지)를 재서 표시. 다시 받은 엔진은 "로드 0 ms(재사용)".
+- `makeEngineCore`가 원점을 대지 중심으로 옮기고 대지와 겹치는 기존 합성 건물·가로수를 뺀다(`excluded`). 빈 대지가 보인다.
+- 툴바(캔버스 위, Studio 토큰, 라이트/다크): 엔진 버튼 [Babylon.js | PlayCanvas | three.js] ↔ `store.setEngine` / `state.ui.engine`,
+  시점 [조감 | 보행자 | 평면 | 북측], "태양 춘·추분 14:00". 오른쪽 위 방위표(카메라 방향 따라 회전). F = 조감(`fit()`).
+- 하단 상태줄: `채택 r{n} 기준 · 대지 내 기존 합성 건물 {k}동 제외(SYNTHETIC) · {엔진} {버전} · 로드 {ms} ms · 장면 {ms} ms · 드로우콜 {n}`
+  (k = 0이면 "대지 내 기존 합성 건물 없음"). 메모: 초안이 있으면 "초안은 3D에 반영하지 않음", 항상 "주변 건물 높이 ASSUMED",
+  "경계·도로·필지는 3D 바닥에 포함"(그 레이어를 끄면 "…끔: 2D·MAP에만 적용"으로 강조). 앱 상태줄에는 "3D 준비 · 채택 r{n} · 엔진 · 로드 · 장면".
+- 레이어: 주변 건물 → 어댑터 `context` + `trees`, 원경 지형 → `terrain`, 즉시 반영. 대지경계·도로·필지는 3D 바닥 장면에 구워져 있어 토글하지 않는다.
+- 대지별 시점(어댑터 프리셋은 매스 스터디 대지용이라 다른 필지에서는 앞 건물이 대지를 가린다): 엔진 코어의 주변 건물 상자로
+  - 조감: 대지 중심·모서리(중심 쪽 20 %)에서 카메라 쪽으로 쏜 광선이 주변 건물 위를 지나는 최소 앙각(+3°, 32–70°)을 방위 15° 간격으로 구하고,
+    남남동(150°)에 가깝고 낮은 쪽을 고른다. target = 대지 중심 지면, 거리 max(240 m, 대지 반경 × 7).
+  - 북측: 방위 0°, 같은 방식의 앙각(18–60°), 거리 170 m.
+  - 보행자: 대지 가장자리에서 약 16 m 바깥의 도로·보도 위 1.6 m 눈높이(가로수·건물이 시선을 가리지 않는 곳), target 대지 중심 6 m, 시야각 70°.
+  - 평면: 어댑터 프리셋 그대로. 세로 화면은 프리셋과 같은 비율로 거리를 늘린다. 계산 결과는 `adapter.setView(name, override)`로 넘긴다.
+- 엔진 전환: 이전 어댑터 `dispose()`(WebGL 컨텍스트 즉시 해제) → 캔버스 제거 → 새 엔진으로 다시 만들기. 받은 엔진 스크립트는 재사용.
+- 리비전 변경(`store.site.current`): 활성 중이면 즉시, 아니면 다음 활성화 때 다시 만든다(경계가 같으면 번호만 바꿈). JSON 불러오기도 같다.
+- 비활성(다른 탭): `adapter.pause()` — 렌더 루프 완전 정지(rAF·GPU 작업 없음), 상태줄 폴링·방위표 rAF도 정지.
+  다시 활성: `resume()`만(리비전·엔진이 그대로면 다시 만들지 않음). 탭을 떠난 사이 엔진 로드가 끝나면 장면은 돌아올 때 만든다.
+- 실패(CDN 차단, WebGL 실패, 장면 오류): 디자인된 오류 카드(원인·설명·오류 문구·[다시 시도]). 툴바는 남아 다른 엔진을 고를 수 있고, 반쯤 만든 캔버스는 지운다.
+  CDN 차단이면 "2D·MAP 탭은 그대로", WebGL 실패면 "2D 도면은 그대로"라고 안내. `activate()`는 이때 `{ ok:false, error }`로 끝난다(throw 안 함).
+- 좁은 화면(≤ 900 px 또는 뷰 폭 < 640 px): 툴바 두 줄, 상태줄 줄바꿈, 가로 스크롤 없음.
 
 ## 시험 API
-`window.__studio = { ready, store, core: STUDIO_CORE, setTab(name), viewReady(name) → Promise }`
+`window.__studio = { ready, store, core: STUDIO_CORE, ctx, setTab(name), viewReady(name) → Promise<{ok, error?, reason?}>, view(name), persistNow() }`
+(`viewReady`는 그 뷰의 첫 활성화 결과로 한 번만 정해진다.)
+`__studio.view('3D')` = `{ activate, deactivate, dispose, fit, setView(name), whenIdle() → Promise(진행 중인 빌드 끝), debug(), adapter }`,
+`debug()` → `{ phase:'idle'|'loading'|'ready'|'error', active, engine, label, rev, excluded, engineMs, sceneMs, frames, drawCalls, buildCount, view, framing, error, status, canvases }`.
+
+`tools/smoke-studio.mjs [scenario…]` 시나리오: `desktop`(편집 흐름 + 3D, 초안 메모), `desktop-dark`, `mobile`(3D 한 장),
+`desktop-3d`(엔진별 `studio-3d-<engine>.png`, 툴바로 엔진 6회 전환, 활성 3D 옆에서 어댑터 3종 × 20회 생성·dispose 후 컨텍스트 경고·끊김 없음,
+레이어 즉시 반영(드로우콜 감소), 시점 버튼·F, 먼 필지 P150 채택 → 재생성·제외 1동·화면 중심 = 대지 중심, 2D로 가면 프레임 정지,
+숨은 동안 리비전 변경 → 돌아올 때 재생성, 숨김/표시는 재생성 없이 재개, dispose → 컨텍스트 해제),
+`3d-error`(엔진 스크립트 지연 → 로딩 카드, CDN 차단 → 오류 카드·다시 시도). 콘솔 오류 0(의도한 차단 1건만 예외), 외부 요청 차단 0, 가로 넘침 0.

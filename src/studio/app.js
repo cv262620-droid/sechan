@@ -169,10 +169,11 @@
         }
         if (!v.inst || v.state === 'error') return;
         try {
-            await v.inst.activate();
+            // a view that shows its own error card (3D) resolves { ok: false, error } instead of throwing
+            const r = await v.inst.activate();
             v.state = 'ready';
             if (activeTab !== name) v.inst.deactivate();
-            settle(name, { ok: true });
+            settle(name, r && r.ok === false ? r : { ok: true });
         } catch (e) {
             v.state = 'error';
             console.warn(`[studio] ${name} view failed to activate`, e);

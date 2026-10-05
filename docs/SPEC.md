@@ -52,14 +52,19 @@
 async function createXxxAdapter(canvas, core) { ...; return adapter; }
 
 adapter = {
-  engineName: 'Babylon.js' | 'PlayCanvas',
-  engineVersion: string,            // 런타임에서 읽기 (BABYLON.Engine.Version / pc.version)
+  engineName: 'Babylon.js' | 'PlayCanvas' | 'three.js',
+  engineVersion: string,            // 런타임에서 읽기 (BABYLON.Engine.Version / pc.version / 'r' + THREE.REVISION)
   async init(),                     // 주변 장면 전체 생성(지형, 아스팔트, 블록 플랫폼, 공원, 노면표시, 필지선, 대지 채움+경계선, 주변 건물, 가로수),
                                     // 조명·그림자·카메라(초기 'aerial')·렌더 루프 시작. 첫 프레임이 실제로 그려진 뒤 resolve.
   setMass(mass),                    // buildMainMass() 결과로 계획 건물 메시 재생성(이전 것 dispose). floors[].slab/body, roofSlab, rooftop.
+                                    // 빈 매스(floors = [], 빈 roofSlab/rooftop — STUDIO_CORE.emptyMass)도 받는다: 메시 없음, 오류 없음,
+                                    // 강조·카메라(매스 상자) 제한은 그대로 동작.
   setSun({ vector, altitude, azimuth }), // vector = sunVector(). altitude <= 0 이면 직사광 끄고 그림자 없음(어두운 환경광).
                                     // 고도가 낮을수록 약간 따뜻한 색, 환경광은 하늘/지면 반구광.
-  setView(name),                    // 'aerial' | 'pedestrian' | 'top' | 'north' — 부드러운 카메라 전환(≤ 0.8 s, prefers-reduced-motion이면 즉시)
+  setView(name, override?),         // 'aerial' | 'pedestrian' | 'top' | 'north' — 부드러운 카메라 전환(≤ 0.8 s, prefers-reduced-motion이면 즉시)
+                                    // override(선택): { target:[x,y,z], azimuth, elevation, distance, fov } (엔진 좌표·도·m)가 있으면
+                                    // 그 필드만 프리셋 값을 대신한다(시점 이름의 동작 — 보행자 제한 등 — 은 그대로). 매스 스터디는 쓰지 않음,
+                                    // Studio 3D가 대지마다 가리지 않는 조감·보행자·북측 시점을 계산해 넘긴다.
   setLayer(name, visible),          // 'context'(주변 건물) | 'trees' | 'shadows' | 'terrain'(외곽 지형)
   setHighlight(level | null),       // 해당 층 slab+body 강조색, null이면 해제
   setViewInset({ left, bottom }),   // (선택) UI 패널이 덮는 캔버스 영역(CSS px). 데스크톱 = 왼쪽 패널 오른쪽 끝, 폰 = 하단 시트 높이.
@@ -68,16 +73,24 @@ adapter = {
                                     // UI가 init() 전에 한 번, 이후 패널/캔버스 크기가 바뀔 때마다 호출.
   screenToRay(clientX, clientY),    // → { origin:[x,y,z], dir:[x,y,z] } 엔진 좌표 (UI가 core.pickFloor로 판정)
   cameraHeading(),                  // 카메라가 바라보는 방향의 방위각(북=0, 시계방향, 도) — UI 방위표 회전용
-  stats(),                          // → { fps, drawCalls, triangles|null }
-  dispose()                         // 선택
+  stats(),                          // → { fps, drawCalls, triangles|null, frames? } frames = 지금까지 그린 프레임 수(일시정지 중엔 그대로)
+  pause(), resume(),                // (선택) pause: 렌더 루프를 완전히 멈춘다(rAF·프레임 작업·GPU 작업 없음). resume: 다시 시작.
+                                    // 둘 다 여러 번 불러도 안전. init() 중 pause는 첫 프레임 뒤에 적용(init은 그대로 resolve).
+                                    // Studio 3D 탭이 숨을 때 pause, 다시 보일 때 resume.
+  dispose()                         // 렌더 루프·리스너·GPU 자원 해제 + WebGL 컨텍스트를 즉시 놓는다(WEBGL_lose_context:
+                                    // Babylon은 엔진 옵션 loseContextOnDispose, PlayCanvas는 app.destroy() 뒤 loseContext(),
+                                    // three는 renderer.forceContextLoss()). 엔진 전환·리비전 재생성처럼 만들고 버리기를 반복해도
+                                    // 브라우저의 활성 컨텍스트 한도(Chrome ≈ 16)에 걸려 살아 있는 뷰가 끊기지 않게.
 }
 ```
 
 카메라 조작: 마우스 왼쪽 드래그 = 궤도 회전, 오른쪽 드래그(또는 Shift+왼쪽) = 이동, 휠 = 줌, 터치: 한 손가락 회전·두 손가락 핀치 줌/이동.
 지면 아래로 내려가지 않게 제한(극각 ≤ 88°), 줌 범위 약 15–900 m. 클릭(드래그 아님)은 UI가 처리하므로 어댑터는 canvas 이벤트를 막지 않는다.
-추가 제한(두 엔진 동일):
+추가 제한(세 엔진 동일):
 - `pedestrian` 시점은 위를 올려다봐야 하므로(극각 ≈ 115°) 이 시점에서만 극각 제한 대신 "눈높이 ≥ 지면 + 1.7 m" 제한을 쓴다.
 - 눈은 외곽 지형(`core.terrainHeight`) 위 1.7 m 아래로 내려가지 않는다(원경 언덕 속으로 들어가지 않게).
+  궤도 중심(target)을 언덕 밑으로 이동한 경우(예: target (−600, 0, 700), 거리 15 m)는 앙각을 올려도 눈이 언덕 속에 남으므로,
+  앙각이 30°를 넘으면 거리를 늘려 눈을 언덕 위로 꺼낸다(줌인이 언덕 표면에서 멈춤).
 - 눈은 계획 건물 안으로 들어가지 않는다: 저층부·고층부(+옥탑) AABB를 4 m 키운 상자 밖으로, target→카메라 광선을 따라 거리를 늘린다
   (프리셋 target이 매스 안에 있어 줌인하면 건물 속으로 들어가기 때문).
 

@@ -2,9 +2,13 @@
 // Wraps the page in the artifact host skeleton, serves jsDelivr URLs from node_modules, stubs Google Fonts,
 // then for desktop light / desktop dark / 400 px mobile: waits for window.__studio.ready, screenshots the 2D view,
 // runs the edit flow (store API + real mouse events on the canvas), an invalid bow-tie draft, JSON copy/paste,
-// the MAP and 3D tabs, and the narrow-screen drawers. Fails on console errors, blocked external requests,
-// horizontal overflow or a broken flow.
-// Usage: node tools/build.mjs studio && node tools/smoke-studio.mjs      -> screenshots in .shots/studio-*.png
+// the MAP and 3D tabs, and the narrow-screen drawers. Two more desktop scenarios cover the 3D view in depth:
+//   desktop-3d  every engine (studio-3d-<engine>.png), 6 engine switches from the toolbar, WebGL context churn
+//               (20 x create/dispose per adapter next to the live view), live layers, view buttons, a distant
+//               parcel (P150) adopted while 3D is open, pause while hidden, rebuild on activate, dispose
+//   3d-error    loading card (delayed engine script), blocked CDN → error card → 다시 시도
+// Fails on console errors, blocked external requests, horizontal overflow or a broken flow.
+// Usage: node tools/build.mjs studio && node tools/smoke-studio.mjs [scenario ...]   -> screenshots in .shots/studio-*.png
 import { chromium } from 'playwright';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -33,30 +37,255 @@ if (!existsSync(distFile)) { console.error('dist/studio.html missing: run node t
 const wrapped = join(shots, 'studio.wrapped.html');
 writeFileSync(wrapped, wrap(readFileSync(distFile, 'utf8')));
 
+// ---------- 3D scenario (desktop, reduced motion: view presets apply instantly) ----------
+async function run3D({ page, S, check, shot, overflow, notes, contextWarnings }) {
+    const idle = () => S(() => Promise.race([__studio.view('3D').whenIdle(), new Promise((r) => setTimeout(r, 90000))]));
+    const dbg = () => S(() => { const d = __studio.view('3D').debug(); delete d.framing; return d; });
+    const foot = () => page.textContent('.v3-foot');
+    // SwiftShader draws ~2-4 frames/s at this size, with the odd >1 s frame (shader compiles): poll up to 6 s
+    const framesGrow = async (label) => {
+        const a = (await dbg()).frames;
+        let b = a;
+        for (let i = 0; i < 24 && b <= a; i++) { await page.waitForTimeout(250); b = (await dbg()).frames; }
+        check(b > a, `${label}: frames keep coming (${a} → ${b})`);
+    };
+
+    // 1. each engine, chosen while 3D is hidden and built when the tab opens
+    let first = true;
+    for (const eng of ['babylon', 'playcanvas', 'three']) {
+        await S(() => __studio.setTab('2D'));
+        await S((e) => __studio.store.setEngine(e), eng);
+        const res = await S(() => Promise.race([__studio.setTab('3D'), new Promise((r) => setTimeout(() => r({ ok: false, error: 'timeout 90s' }), 90000))]));
+        if (first) check(res && res.ok, `viewReady('3D') ${JSON.stringify(res)}`);
+        first = false;
+        await idle();
+        await page.waitForTimeout(1200);
+        const d = await dbg();
+        notes.push(`${eng}: ${d.label} · load ${d.engineMs} ms · scene ${d.sceneMs} ms · draws ${d.drawCalls}`);
+        check(d.phase === 'ready' && d.engine === eng && d.canvases === 1 && d.drawCalls > 0 && d.rev === 1, `${eng} ready ${JSON.stringify(d)}`);
+        const f = await foot();
+        check(f.includes('채택 r1 기준') && f.includes(d.label) && /대지 내 기존 합성 건물 없음/.test(f) && /드로우콜 \d+/.test(f), `${eng} status line (${f})`);
+        await framesGrow(eng);
+        await shot(`studio-3d-${eng}`);
+        await overflow(`3D ${eng}`);
+    }
+
+    // 2. switch engines from the toolbar while the view is open, 3 times back and forth
+    const seq = ['babylon', 'playcanvas', 'babylon', 'three', 'babylon', 'playcanvas'];
+    for (const eng of seq) {
+        await page.click(`.v3-bar [data-engine="${eng}"]`);
+        await idle();
+        const d = await dbg();
+        const pressed = await page.getAttribute(`.v3-bar [data-engine="${eng}"]`, 'aria-pressed');
+        check(d.phase === 'ready' && d.engine === eng && d.canvases === 1 && pressed === 'true', `toolbar switch → ${eng} ${JSON.stringify({ phase: d.phase, engine: d.engine, canvases: d.canvases, pressed })}`);
+    }
+    notes.push(`toolbar engine switches: ${seq.join(' → ')} (cached engine scripts reused)`);
+    await framesGrow('after engine switches');
+
+    // 3. WebGL context churn: 20 x create/dispose of every adapter on fresh canvases next to the live view.
+    // Without a released context Chrome warns "Too many active WebGL contexts" and drops the oldest (= the live view).
+    const churn = await S(async () => {
+        const live = document.querySelector('.v3-canvas');
+        const gl = live.getContext('webgl2') || live.getContext('webgl');
+        let lost = 0;
+        const onLost = () => { lost++; };
+        live.addEventListener('webglcontextlost', onLost);
+        const F = { babylon: window.createBabylonAdapter, playcanvas: window.createPlayCanvasAdapter, three: window.createThreeAdapter };
+        const host = document.createElement('div');
+        host.style.cssText = 'position:fixed;left:0;top:0;width:320px;height:200px;visibility:hidden';
+        document.body.appendChild(host);
+        const core = __studio.core.makeEngineCore(__studio.store.currentRevision().polygon);
+        const t0 = performance.now();
+        let n = 0;
+        for (const name of ['babylon', 'playcanvas', 'three']) {
+            for (let i = 0; i < 20; i++) {
+                const c = document.createElement('canvas');
+                c.style.cssText = 'width:320px;height:200px';
+                host.appendChild(c);
+                const a = await F[name](c, core);
+                a.dispose();
+                c.remove();
+                n++;
+            }
+        }
+        host.remove();
+        await new Promise((r) => setTimeout(r, 400));
+        live.removeEventListener('webglcontextlost', onLost);
+        return { n, ms: Math.round(performance.now() - t0), lost, isLost: gl ? gl.isContextLost() : null };
+    });
+    notes.push(`context churn: ${churn.n} adapters created/disposed in ${churn.ms} ms, live view lost=${churn.lost}, warnings=${contextWarnings.length}`);
+    check(churn.n === 60 && churn.lost === 0 && churn.isLost === false, `live 3D context survives 60 create/dispose cycles ${JSON.stringify(churn)}`);
+    check(contextWarnings.length === 0, `no WebGL context warnings (${contextWarnings.length})`);
+    await framesGrow('after context churn');
+
+    // 4. layers apply live: 주변 건물 off → fewer draw calls (context buildings + trees), then on again
+    const draws = () => S(() => __studio.view('3D').adapter.stats().drawCalls);
+    const dOn = await draws();
+    await page.click('#layer-context');
+    await page.waitForTimeout(1200);
+    const dOff = await draws();
+    await page.click('#layer-context');
+    await page.waitForTimeout(1200);
+    const dBack = await draws();
+    check(dOff < dOn && dBack === dOn, `주변 건물 layer toggles live (draw calls ${dOn} → ${dOff} → ${dBack})`);
+
+    // 5. view buttons, F = fit (aerial)
+    for (const v of ['top', 'pedestrian', 'north']) {
+        await page.click(`.v3-bar [data-view="${v}"]`);
+        await page.waitForTimeout(900);
+        const d = await dbg();
+        const pressed = await page.getAttribute(`.v3-bar [data-view="${v}"]`, 'aria-pressed');
+        check(d.view === v && pressed === 'true', `view button ${v}`);
+        await shot(`studio-3d-${v}`);
+    }
+    await page.keyboard.press('f');
+    await page.waitForTimeout(600);
+    check((await dbg()).view === 'aerial', 'F key fits the aerial view');
+
+    // 6. adopt a distant parcel while 3D is open → rebuilt around it, its synthetic building left out
+    const before = await dbg();
+    await S(() => { const s = __studio.store; s.startDraft(__studio.core.parcelPolygon('P150'), 'PARCEL'); return s.adoptDraft('3D 시험: 먼 필지 P150'); });
+    await idle();
+    await page.waitForTimeout(1200);
+    const after = await dbg();
+    const f150 = await foot();
+    check(after.phase === 'ready' && after.buildCount === before.buildCount + 1 && after.rev === 2 && after.excluded.buildings === 1, `P150 adopted → 3D rebuilt ${JSON.stringify({ before: before.buildCount, after: after.buildCount, rev: after.rev, excluded: after.excluded })}`);
+    check(/채택 r2 기준/.test(f150) && /합성 건물 1동 제외/.test(f150), `status line names the left-out building (${f150})`);
+    // the camera frames the site: the ray through the canvas centre lands on the ground near the site centroid
+    const aim = await S(() => {
+        const v = __studio.view('3D'), c = document.querySelector('.v3-canvas').getBoundingClientRect();
+        const r = v.adapter.screenToRay(c.left + c.width / 2, c.top + c.height / 2);
+        const t = -r.origin[1] / r.dir[1];
+        return { x: r.origin[0] + t * r.dir[0], z: r.origin[2] + t * r.dir[2], centroid: __studio.core.centroid(__studio.store.currentRevision().polygon) };
+    });
+    notes.push(`P150: aerial aims at (${aim.x.toFixed(1)}, ${aim.z.toFixed(1)}) m from the site centroid E ${aim.centroid[0].toFixed(1)} N ${aim.centroid[1].toFixed(1)}`);
+    check(Math.hypot(aim.x, aim.z) < 5, `aerial view centred on the adopted far parcel (${JSON.stringify(aim)})`);
+    await shot('studio-3d-parcel');
+    await overflow('3D parcel');
+
+    // 7. hidden tab → render loop paused (no frames); revision change while hidden → rebuilt on the next activate
+    await S(() => __studio.setTab('2D'));
+    await page.waitForTimeout(300);
+    const p0 = await dbg();
+    await page.waitForTimeout(1200);
+    const p1 = await dbg();
+    check(!p1.active && p1.frames === p0.frames, `3D paused while 2D is shown (frames ${p0.frames} → ${p1.frames})`);
+    await S(() => __studio.store.restoreRevision(1));
+    await page.waitForTimeout(600);
+    const p2 = await dbg();
+    check(p2.buildCount === p1.buildCount && p2.frames === p1.frames, `no rebuild and no frames while hidden ${JSON.stringify({ builds: [p1.buildCount, p2.buildCount], frames: [p1.frames, p2.frames] })}`);
+    await S(() => __studio.setTab('3D'));
+    await idle();
+    await page.waitForTimeout(800);
+    const p3 = await dbg();
+    check(p3.phase === 'ready' && p3.buildCount === p2.buildCount + 1 && p3.rev === 3 && p3.excluded.buildings === 0, `r3 (restored r1) rebuilt on activate ${JSON.stringify({ builds: p3.buildCount, rev: p3.rev, excluded: p3.excluded })}`);
+    await S(() => __studio.setTab('2D'));
+    await page.waitForTimeout(300);
+    const h0 = await dbg();
+    await S(() => __studio.setTab('3D'));
+    let h1 = await dbg();
+    for (let i = 0; i < 24 && h1.frames <= h0.frames; i++) { await page.waitForTimeout(250); h1 = await dbg(); }
+    check(h1.buildCount === h0.buildCount && h1.frames > h0.frames, `hide/show resumes without a rebuild (frames ${h0.frames} → ${h1.frames})`);
+    await shot('studio-3d-r3');
+
+    // 8. dispose releases the adapter, its WebGL context and the DOM
+    const disp = await S(() => {
+        const c = document.querySelector('.v3-canvas');
+        const gl = c.getContext('webgl2') || c.getContext('webgl');
+        __studio.view('3D').dispose();
+        return { root: !!document.querySelector('.v3-root'), lost: gl.isContextLost() };
+    });
+    check(!disp.root && disp.lost, `dispose removes the view and releases its context ${JSON.stringify(disp)}`);
+}
+
+// ---------- 3D loading / error cards ----------
+async function run3DError({ page, S, check, shot, overflow, notes, blockedOnPurpose, delayed, expectedFailures }) {
+    // loading card: hold the Babylon.js script back for 2.5 s
+    delayed.set(ENGINE_URL.babylon, 2500);
+    const opening = S(() => __studio.setTab('3D'));
+    await page.waitForTimeout(800);
+    const card = await page.textContent('.v3-msg');
+    check(/Babylon\.js 9\.29\.0 불러오는 중/.test(card || ''), `loading card (${card})`);
+    await shot('studio-3d-loading');
+    const res = await opening;
+    await S(() => __studio.view('3D').whenIdle());
+    delayed.delete(ENGINE_URL.babylon);
+    const d0 = await S(() => __studio.view('3D').debug());
+    check(res && res.ok && d0.phase === 'ready' && d0.engineMs >= 2400, `engine load time includes the delay (${d0.engineMs} ms)`);
+
+    // CDN blocked: the PlayCanvas script fails → error card with 다시 시도, the other tabs keep working
+    blockedOnPurpose.add(ENGINE_URL.playcanvas);
+    await page.click('.v3-bar [data-engine="playcanvas"]');
+    await S(() => __studio.view('3D').whenIdle());
+    const e = await S(() => ({ d: __studio.view('3D').debug(), card: document.querySelector('.v3-msg').innerText, hidden: document.querySelector('.v3-msg').hidden, retry: !!document.querySelector('.v3-msg [data-act="retry"]'), status: document.getElementById('status-text').textContent }));
+    check(e.d.phase === 'error' && !e.hidden && e.retry && /받지 못했습니다/.test(e.card) && /다른 탭|2D·MAP/.test(e.card), `error card for a blocked CDN ${JSON.stringify({ phase: e.d.phase, retry: e.retry, card: e.card })}`);
+    check(e.d.canvases === 0, 'no half-built canvas left behind');
+    check(expectedFailures.length === 1, `exactly the one deliberate script failure (${expectedFailures.length})`);
+    notes.push(`error card: ${e.card.replace(/\s+/g, ' ').slice(0, 160)}`);
+    await shot('studio-3d-error');
+    await overflow('3D error');
+    await S(() => __studio.setTab('2D'));
+    await page.waitForTimeout(300);
+    const twoD = await S(() => ({ shown: !document.getElementById('view-2D').hidden, canvas: !!document.getElementById('p2-canvas') }));
+    check(twoD.shown && twoD.canvas, '2D still works while 3D is in error');
+    await S(() => { __studio.store.setTab('3D'); });
+    await page.waitForTimeout(400);
+    const back = await S(() => ({ card: !document.querySelector('.v3-msg').hidden, status: document.getElementById('status-text').textContent, kind: document.getElementById('status-text').dataset.kind }));
+    check(back.card && back.kind === 'error' && /받지 못했습니다/.test(back.status), `back on 3D: error card and status stay (${JSON.stringify(back)})`);
+    // unblock, press 다시 시도
+    blockedOnPurpose.delete(ENGINE_URL.playcanvas);
+    await page.click('.v3-msg [data-act="retry"]');
+    await S(() => __studio.view('3D').whenIdle());
+    await page.waitForTimeout(800);
+    const ok = await S(() => __studio.view('3D').debug());
+    check(ok.phase === 'ready' && ok.engine === 'playcanvas' && ok.canvases === 1, `다시 시도 builds the scene ${JSON.stringify({ phase: ok.phase, engine: ok.engine })}`);
+    await shot('studio-3d-retried');
+}
+
 const browser = await chromium.launch({
     executablePath: '/opt/pw-browsers/chromium',
     args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'],
 });
 
-const scenarios = [
+const allScenarios = [
     { id: 'desktop', width: 1440, height: 900, scheme: 'light', full: true },
     { id: 'desktop-dark', width: 1440, height: 900, scheme: 'dark' },
     { id: 'mobile', width: 400, height: 860, scheme: 'light', mobile: true },
+    { id: 'desktop-3d', width: 1440, height: 900, scheme: 'light', kind: '3d', reducedMotion: 'reduce' },
+    { id: '3d-error', width: 1440, height: 900, scheme: 'light', kind: '3d-error', reducedMotion: 'reduce' },
 ];
+const only = process.argv.slice(2);
+const scenarios = only.length ? allScenarios.filter((x) => only.includes(x.id)) : allScenarios;
+const ENGINE_URL = {
+    babylon: 'https://cdn.jsdelivr.net/npm/babylonjs@9.29.0/babylon.js',
+    playcanvas: 'https://cdn.jsdelivr.net/npm/playcanvas@2.23.0/build/playcanvas.min.js',
+};
 let failed = false;
 
 for (const sc of scenarios) {
     const context = await browser.newContext({
         viewport: { width: sc.width, height: sc.height }, colorScheme: sc.scheme, deviceScaleFactor: 1,
-        isMobile: !!sc.mobile, hasTouch: !!sc.mobile,
+        isMobile: !!sc.mobile, hasTouch: !!sc.mobile, reducedMotion: sc.reducedMotion || 'no-preference',
     });
     const page = await context.newPage();
-    const errors = [], notes = [];
-    page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
+    const errors = [], notes = [], contextWarnings = [];
+    // the 3d-error scenario blocks / delays engine URLs on purpose; the console error of that one deliberate
+    // failure is expected there (and checked), everything else still counts
+    const blockedOnPurpose = new Set(), delayed = new Map(), expectedFailures = [];
+    page.on('console', (m) => {
+        const t = m.text();
+        if (/too many active webgl contexts|context lost|lost context/i.test(t)) contextWarnings.push(`${m.type()}: ${t}`);
+        if (m.type() !== 'error') return;
+        const at = (m.location() && m.location().url) || '';
+        if (blockedOnPurpose.has(at) && /Failed to load resource/.test(t)) { expectedFailures.push(at); return; }
+        errors.push(`console: ${t}`);
+    });
     page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
     await page.route('**/*', async (route) => {
         const url = route.request().url();
         if (url.startsWith('file:') || url.startsWith('data:') || url.startsWith('blob:')) return route.continue();
+        if (blockedOnPurpose.has(url)) return route.abort();
+        if (delayed.has(url)) await new Promise((r) => setTimeout(r, delayed.get(url)));
         const local = cdnToLocal(url);
         if (local) return route.fulfill({ status: 200, contentType: typeOf(local), headers: { 'Access-Control-Allow-Origin': '*' }, body: readFileSync(local) });
         if (/fonts\.(googleapis|gstatic)\.com/.test(url)) return route.fulfill({ status: 200, contentType: 'text/css', body: '' });
@@ -79,6 +308,20 @@ for (const sc of scenarios) {
     } catch { errors.push('timeout: window.__studio.ready never became true'); }
     const loadMs = Date.now() - t0;
     await page.waitForTimeout(400);
+    if (sc.kind) {
+        try {
+            if (sc.kind === '3d') await run3D({ page, S, check, shot, overflow, notes, errors, contextWarnings });
+            else await run3DError({ page, S, check, shot, overflow, notes, blockedOnPurpose, delayed, expectedFailures });
+        } catch (e) {
+            errors.push(`flow: ${e.message.split('\n')[0]}`);
+            try { await shot(`studio-fail-${sc.id}`); } catch { /* ignore */ }
+        }
+        if (contextWarnings.length) errors.push(`WebGL context warnings: ${contextWarnings.slice(0, 3).join(' | ')}`);
+        console.log(JSON.stringify({ scenario: sc.id, loadMs, errors, notes }, null, 1));
+        if (errors.length) failed = true;
+        await context.close();
+        continue;
+    }
     await shot(`studio-2d${suffix}`);
     await overflow('2D initial');
 
@@ -248,9 +491,19 @@ for (const sc of scenarios) {
         }
 
         // ---------- 3D ----------
+        const has3D = await S(() => typeof window.create3DView === 'function');
         const res3 = await S(() => Promise.race([__studio.setTab('3D'), new Promise((r) => setTimeout(() => r({ ok: false, error: 'timeout 90s' }), 90000))]));
-        notes.push(`3D: ${JSON.stringify(res3)}`);
-        await page.waitForTimeout(800);
+        notes.push(`3D: factory=${has3D} ${JSON.stringify(res3)}`);
+        if (has3D) {
+            check(res3 && res3.ok, `3D view activates (${JSON.stringify(res3)})`);
+            await page.waitForTimeout(1500);
+            const d3 = await S(() => ({ d: __studio.view('3D').debug(), foot: document.querySelector('.v3-foot').innerText, status: document.getElementById('status-text').textContent }));
+            notes.push(`3D: ${d3.d.label} · load ${d3.d.engineMs} ms · scene ${d3.d.sceneMs} ms · draws ${d3.d.drawCalls}`);
+            check(d3.d.phase === 'ready' && d3.d.engine === 'babylon' && d3.d.canvases === 1 && d3.d.frames > 0, `3D ready with Babylon.js by default ${JSON.stringify(d3.d)}`);
+            check(/채택 r\d+ 기준/.test(d3.foot) && /합성 건물/.test(d3.foot) && /Babylon\.js 9\.29\.0/.test(d3.foot) && /로드 [\d,]+ ms/.test(d3.foot) && /드로우콜 \d+/.test(d3.foot), `3D status line (${d3.foot})`);
+            if (sc.full) check(/초안은 3D에 반영하지 않음/.test(d3.foot), `draft note shown in 3D while the P078 draft exists (${d3.foot})`);
+            check(/3D 준비/.test(d3.status), `app status line reports 3D ready (${d3.status})`);
+        } else await page.waitForTimeout(800);
         await shot(`studio-3d${suffix}`);
         await overflow('3D');
 
@@ -364,6 +617,7 @@ for (const sc of scenarios) {
         try { await shot(`studio-fail${suffix}`); } catch { /* ignore */ }
     }
 
+    if (contextWarnings.length) errors.push(`WebGL context warnings: ${contextWarnings.slice(0, 3).join(' | ')}`);
     console.log(JSON.stringify({ scenario: sc.id, loadMs, errors, notes }, null, 1));
     if (errors.length) failed = true;
     await context.close();

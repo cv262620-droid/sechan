@@ -25,9 +25,12 @@ async function createBabylonAdapter(canvas, core) {
         || Math.min(window.screen?.width || 1e4, window.screen?.height || 1e4) < 700;
 
     // ---------- engine / scene ----------
+    // loseContextOnDispose: dispose() releases the WebGL context right away, so repeated create/dispose
+    // (engine switching, rebuilds) never runs into the browser's active-context limit (~16 in Chrome).
     const engine = new B.Engine(canvas, true, {
         antialias: true, stencil: false, preserveDrawingBuffer: false,
         adaptToDeviceRatio: true, limitDeviceRatio: 2, powerPreference: 'high-performance',
+        loseContextOnDispose: true,
     }, true);
     const scene = new B.Scene(engine);
     scene.useRightHandedSystem = true;
@@ -232,8 +235,11 @@ async function createBabylonAdapter(canvas, core) {
     const layers = { context: [], trees: [], terrain: [] };
     let massMesh = null, massBaseColors = null, massRanges = null, currentMass = null, highlightLevel = null;
     let parcelLines = null;
-    const frameStats = { drawCalls: 0, triangles: 0 };
+    const frameStats = { drawCalls: 0, triangles: 0, frames: 0 };
     let firstFrameResolve = null;
+    let paused = false;                  // pause(): render loop stopped (no rAF, no GPU work) until resume()
+    let started = false, initPending = false;
+    const renderFrame = () => scene.render();
 
     // ---------- planned building (one mesh, per-vertex colours so highlight = colour-buffer update) ----------
     function buildMassMesh(mass) {
@@ -334,6 +340,14 @@ async function createBabylonAdapter(canvas, core) {
             massMesh.dispose(false, false); // geometry + buffers go, shared material stays
             massMesh = null;
         }
+        massRanges = data.ranges;
+        if (!data.positions.length) {
+            // empty mass (no floors, e.g. STUDIO_CORE.emptyMass): no mesh at all
+            massBaseColors = null;
+            highlightLevel = null;
+            refreshShadows();
+            return;
+        }
         const mesh = new B.Mesh('plannedMass', scene);
         mesh.setVerticesData(B.VertexBuffer.PositionKind, data.positions, false);
         mesh.setVerticesData(B.VertexBuffer.NormalKind, data.normals, false);
@@ -419,8 +433,19 @@ async function createBabylonAdapter(canvas, core) {
         camera.inertialAlphaOffset = 0; camera.inertialBetaOffset = 0; camera.inertialRadiusOffset = 0;
         camera.inertialPanningX = 0; camera.inertialPanningY = 0;
     }
-    function setView(name) {
+    // Optional framing override (docs/SPEC.md): { target:[x,y,z], azimuth, elevation, distance, fov } in engine
+    // coordinates / degrees / metres replaces those preset fields (e.g. a site-aware aerial in the Studio).
+    function applyOverride(to, o) {
+        if (Array.isArray(o.target) && o.target.length === 3 && o.target.every(Number.isFinite)) to.target = o.target.slice();
+        if (Number.isFinite(o.azimuth)) to.alpha = azToAlpha(o.azimuth);
+        if (Number.isFinite(o.elevation)) to.beta = clamp((90 - o.elevation) * DEG, 0.002, Math.PI - 0.01);
+        if (Number.isFinite(o.distance)) to.radius = clamp(o.distance, camera.lowerRadiusLimit, camera.upperRadiusLimit);
+        if (Number.isFinite(o.fov)) to.fov = clamp(o.fov, 5, 120) * DEG;
+        return to;
+    }
+    function setView(name, override) {
         const to = presetState(name);
+        if (override) applyOverride(to, override);
         viewMode = name === 'pedestrian' ? 'pedestrian' : 'orbit';
         stopCameraMotion();
         if (reducedMotion() || !scene.activeCamera) { tween = null; applyCamState(to); updateBetaLimit(); return; }
@@ -469,13 +494,25 @@ async function createBabylonAdapter(canvas, core) {
         updateBetaLimit();
         if (!tween) {
             // eye stays >= 1.7 m above the outer terrain hills under it (the polar limit alone allows dipping into them)
-            const sb = Math.sin(camera.beta), t = camera.target;
-            const camE = t.x + camera.radius * Math.cos(camera.alpha) * sb, camN = -(t.z + camera.radius * Math.sin(camera.alpha) * sb);
-            const floorY = groundUnder(camE, camN) + EYE_MIN_Y;
+            const t = camera.target;
+            const eyeFloor = () => {
+                const sb = Math.sin(camera.beta);
+                const camE = t.x + camera.radius * Math.cos(camera.alpha) * sb, camN = -(t.z + camera.radius * Math.sin(camera.alpha) * sb);
+                return groundUnder(camE, camN) + EYE_MIN_Y;
+            };
+            let floorY = eyeFloor();
             if (t.y + camera.radius * Math.cos(camera.beta) < floorY) {
                 const b = Math.acos(clamp((floorY - t.y) / Math.max(camera.radius, 1e-3), -1, 1));
                 camera.upperBetaLimit = Math.min(camera.upperBetaLimit, b);
                 if (camera.beta > b) { camera.beta = b; camera.inertialBetaOffset = 0; }
+                // target panned out under a hill deeper than the orbit radius: even looking straight down the eye
+                // would sit inside the hill, so back the eye out instead (zoom-in stops at the hillside)
+                floorY = eyeFloor();
+                const cb = Math.cos(camera.beta);
+                if (cb > 0.5 && t.y + camera.radius * cb < floorY) {
+                    camera.radius = Math.min(camera.upperRadiusLimit, (floorY - t.y) / cb + 0.01);
+                    if (camera.inertialRadiusOffset > 0) camera.inertialRadiusOffset = 0; // >0 = zooming in
+                }
             }
         }
         // never inside the planned building (also covers a mass that just grew around the eye)
@@ -511,7 +548,9 @@ async function createBabylonAdapter(canvas, core) {
             if (!(m instanceof B.LinesMesh)) tris += m.getTotalIndices() / 3;
         }
         frameStats.triangles = tris;
-        if (firstFrameResolve) { const f = firstFrameResolve; firstFrameResolve = null; f(); }
+        frameStats.frames++;
+        if (firstFrameResolve) { const f = firstFrameResolve; firstFrameResolve = null; initPending = false; f(); }
+        if (paused && !initPending) engine.stopRenderLoop(renderFrame); // pause() asked during init: stop after the first frame
     });
 
     // ---------- resize ----------
@@ -569,7 +608,9 @@ async function createBabylonAdapter(canvas, core) {
             if (!currentMass) setMass(core.buildMainMass());
             applyCamState(presetState('aerial'));
 
-            engine.runRenderLoop(() => scene.render());
+            initPending = true;
+            started = true;
+            engine.runRenderLoop(renderFrame);
             await scene.whenReadyAsync();
             await new Promise((resolve) => { firstFrameResolve = resolve; });
         },
@@ -622,10 +663,25 @@ async function createBabylonAdapter(canvas, core) {
         },
 
         stats() {
-            return { fps: Math.round(engine.getFps() * 10) / 10, drawCalls: frameStats.drawCalls, triangles: frameStats.triangles };
+            // frames: frames drawn since creation (stops increasing while paused)
+            return { fps: paused ? 0 : Math.round(engine.getFps() * 10) / 10, drawCalls: frameStats.drawCalls, triangles: frameStats.triangles, frames: frameStats.frames };
+        },
+
+        // Optional (docs/SPEC.md): stop the render loop entirely while the view is hidden; resume() restarts it.
+        // Idempotent. A pause during init() takes effect right after the first frame (init still resolves).
+        pause() {
+            if (paused) return;
+            paused = true;
+            if (!initPending) engine.stopRenderLoop(renderFrame);
+        },
+        resume() {
+            if (!paused) return;
+            paused = false;
+            if (started) engine.runRenderLoop(renderFrame); // before init() there is no loop to restart
         },
 
         dispose() {
+            paused = true;
             engine.stopRenderLoop();
             canvas.removeEventListener('pointerdown', cancelTween);
             canvas.removeEventListener('wheel', cancelTween);

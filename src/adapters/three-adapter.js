@@ -312,6 +312,14 @@ async function createThreeAdapter(canvas, core) {
         currentMass = mass;
         massBoxes = computeMassBoxes(mass);
         const d = buildMassData(mass);
+        if (!d.positions.length) {
+            // empty mass (no floors, e.g. STUDIO_CORE.emptyMass): no mesh at all
+            if (massMesh) { scene.remove(massMesh); massMesh.geometry.dispose(); massMesh = null; }
+            massBase = null; massRanges = d.ranges; highlightLevel = null;
+            fitShadowCamera();
+            refreshShadows();
+            return;
+        }
         const geo = makeGeometry({ positions: d.positions, normals: d.normals, colorsLinear: d.colors.slice(), indices: d.indices });
         geo.computeBoundingBox();
         if (massMesh) {
@@ -376,7 +384,7 @@ async function createThreeAdapter(canvas, core) {
         };
         for (let i = 0; i < shadowPts.length; i += 3) take(shadowPts[i], shadowPts[i + 1], shadowPts[i + 2]);
         const bb = massMesh && massMesh.geometry.boundingBox;
-        if (bb) for (const x of [bb.min.x, bb.max.x]) for (const y of [bb.min.y, bb.max.y]) for (const z of [bb.min.z, bb.max.z]) take(x, y, z);
+        if (bb && !bb.isEmpty()) for (const x of [bb.min.x, bb.max.x]) for (const y of [bb.min.y, bb.max.y]) for (const z of [bb.min.z, bb.max.z]) take(x, y, z);
         const pad = 1;
         cam.left = x0 - pad; cam.right = x1 + pad; cam.bottom = y0 - pad; cam.top = y1 + pad;
         cam.near = Math.max(0.5, -z1 - 5); cam.far = -z0 + 5;   // view space looks down -Z
@@ -530,8 +538,19 @@ async function createThreeAdapter(canvas, core) {
         }
     }
 
-    function setView(name) {
+    // Optional framing override (docs/SPEC.md): { target:[x,y,z], azimuth, elevation, distance, fov } in engine
+    // coordinates / degrees / metres replaces those preset fields (e.g. a site-aware aerial in the Studio).
+    function applyOverride(to, o) {
+        if (Array.isArray(o.target) && o.target.length === 3 && o.target.every(Number.isFinite)) [to.tx, to.ty, to.tz] = o.target;
+        if (Number.isFinite(o.azimuth)) to.az = o.azimuth;
+        if (Number.isFinite(o.elevation)) to.el = clamp(o.elevation, -60, EL_MAX);
+        if (Number.isFinite(o.distance)) to.dist = clamp(o.distance, DIST_MIN, DIST_MAX);
+        if (Number.isFinite(o.fov)) to.fov = clamp(o.fov, 5, 120);
+        return to;
+    }
+    function setView(name, override) {
         const to = presetState(name);
+        if (override) applyOverride(to, override);
         // presets bypass the generic limits (pedestrian dist/elevation are deliberate)
         if (reducedMotion()) {
             tween = null;
@@ -674,6 +693,8 @@ async function createThreeAdapter(canvas, core) {
 
     // ---------- frame loop ----------
     let firstFrameResolve = null, framesRendered = 0, lastT = 0, running = false;
+    let started = false, paused = false;   // pause(): animation loop off (no rAF, no GPU work) until resume()
+    const stopLoop = () => { if (running) { running = false; renderer.setAnimationLoop(null); } };
     const frameStats = { drawCalls: 0, triangles: 0, fps: 0 };
     let fpsT0 = 0, fpsFrames = 0;
     function frame(t) {
@@ -690,6 +711,7 @@ async function createThreeAdapter(canvas, core) {
         else if (t - fpsT0 >= 500) { frameStats.fps = (fpsFrames * 1000) / (t - fpsT0); fpsT0 = t; fpsFrames = 0; }
         framesRendered++;
         if (firstFrameResolve && framesRendered >= 2) { const f = firstFrameResolve; firstFrameResolve = null; f(); }
+        if (paused && !firstFrameResolve) stopLoop(); // pause() asked during init: stop after the first frames
     }
 
     // ---------- adapter ----------
@@ -738,6 +760,7 @@ async function createThreeAdapter(canvas, core) {
                 try { await renderer.compileAsync(scene, camera); } catch (err) { /* compile-on-render */ }
             }
             const first = new Promise((resolve) => { firstFrameResolve = resolve; });
+            started = true;
             if (!running) { running = true; renderer.setAnimationLoop(frame); }
             await first;
         },
@@ -781,12 +804,30 @@ async function createThreeAdapter(canvas, core) {
 
         stats() {
             // renderer.info of the last frame (a frame that redrew the shadow map also counts its caster draws)
-            return { fps: Math.round(frameStats.fps * 10) / 10, drawCalls: frameStats.drawCalls, triangles: frameStats.triangles };
+            // frames: frames drawn since creation (stops increasing while paused)
+            return { fps: paused ? 0 : Math.round(frameStats.fps * 10) / 10, drawCalls: frameStats.drawCalls, triangles: frameStats.triangles, frames: framesRendered };
+        },
+
+        // Optional (docs/SPEC.md): stop the animation loop entirely while the view is hidden; resume() restarts it.
+        // Idempotent. A pause during init() takes effect right after the first frames (init still resolves).
+        pause() {
+            if (paused) return;
+            paused = true;
+            if (!firstFrameResolve) stopLoop();
+        },
+        resume() {
+            if (!paused) return;
+            paused = false;
+            if (started && !running) {
+                lastT = 0; fpsT0 = 0; fpsFrames = 0; // no catch-up step, fresh fps window
+                running = true;
+                renderer.setAnimationLoop(frame);
+            }
         },
 
         dispose() {
-            running = false;
-            renderer.setAnimationLoop(null);
+            paused = true;
+            stopLoop();
             canvas.removeEventListener('pointerdown', onPointerDown);
             canvas.removeEventListener('pointermove', onPointerMove);
             canvas.removeEventListener('pointerup', onPointerUp);
@@ -801,6 +842,9 @@ async function createThreeAdapter(canvas, core) {
             sun.shadow.dispose();
             scene.clear();
             renderer.dispose();
+            // dispose() frees GL objects but leaves the context to garbage collection: lose it now so repeated
+            // create/dispose (engine switching, rebuilds) never hits the browser's active-context limit
+            renderer.forceContextLoss();
             if (firstFrameResolve) { const f = firstFrameResolve; firstFrameResolve = null; f(); }
         },
 
