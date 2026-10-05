@@ -158,6 +158,17 @@ async function createBabylonAdapter(canvas, core) {
         camera.getProjectionMatrix(true); // recompute -> observer re-applies the shift
     }
 
+    // Ground height the camera must stay above. The terrain mesh is a 25 m grid (core terrainGeometry: half 1100,
+    // step 25, centre e 20 / n 6) whose flat triangles can sit metres above the analytic core.terrainHeight between
+    // grid points, so take the highest corner of the grid cell under (e, n) as well.
+    function groundUnder(e, n) {
+        const G = 25, E0 = 20 - 1100, N0 = 6 - 1100;
+        const i = Math.floor((e - E0) / G), j = Math.floor((n - N0) / G);
+        let h = core.terrainHeight(e, n);
+        for (let di = 0; di <= 1; di++) for (let dj = 0; dj <= 1; dj++) h = Math.max(h, core.terrainHeight(E0 + (i + di) * G, N0 + (j + dj) * G));
+        return h;
+    }
+
     // ---------- mesh helpers ----------
     function meshFromGeom(name, g, mat, opts) {
         const o = opts || {};
@@ -460,7 +471,7 @@ async function createBabylonAdapter(canvas, core) {
             // eye stays >= 1.7 m above the outer terrain hills under it (the polar limit alone allows dipping into them)
             const sb = Math.sin(camera.beta), t = camera.target;
             const camE = t.x + camera.radius * Math.cos(camera.alpha) * sb, camN = -(t.z + camera.radius * Math.sin(camera.alpha) * sb);
-            const floorY = core.terrainHeight(camE, camN) + EYE_MIN_Y;
+            const floorY = groundUnder(camE, camN) + EYE_MIN_Y;
             if (t.y + camera.radius * Math.cos(camera.beta) < floorY) {
                 const b = Math.acos(clamp((floorY - t.y) / Math.max(camera.radius, 1e-3), -1, 1));
                 camera.upperBetaLimit = Math.min(camera.upperBetaLimit, b);

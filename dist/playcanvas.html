@@ -1539,6 +1539,19 @@ async function createPlayCanvasAdapter(canvas, core) {
         crown: makeMaterial('crown', COLORS.crown),
         mass: makeMaterial('mass', null, { vertexColors: true }), // per-vertex: podium/tower/slab/rooftop/highlight
     };
+    // Parity with the Babylon page: its StandardMaterial clamps the light total at 1 before applying vertex
+    // colours, so the planned mass never renders brighter than its spec colours (sunlit faces show exactly
+    // #c98d4b / #d9a35f). Same clamp here, for the mass material only (L_linear <= 1 <=> L_gamma <= 1).
+    MAT.mass.shaderChunks.glsl.set('combinePS', `
+vec3 combineColor(vec3 albedo, vec3 sheenSpecularity, float clearcoatSpecularity) {
+    vec3 ret = albedo * min(dDiffuseLight, vec3(1.0));
+#ifdef LIT_SPECULAR
+    ret += dSpecularLight;
+#endif
+    return ret;
+}
+`);
+    MAT.mass.update();
 
     // ---------- camera ----------
     const camEnt = new pc.Entity('camera');
@@ -1809,12 +1822,22 @@ async function createPlayCanvasAdapter(canvas, core) {
     const goal = Object.assign({}, cur);
     let tween = null;
 
+    // Ground height the camera must stay above. The terrain mesh is a 25 m grid (core terrainGeometry: half 1100,
+    // step 25, centre e 20 / n 6) whose flat triangles can sit metres above the analytic core.terrainHeight between
+    // grid points, so take the highest corner of the grid cell under (e, n) as well.
+    function groundUnder(e, n) {
+        const G = 25, E0 = 20 - 1100, N0 = 6 - 1100;
+        const i = Math.floor((e - E0) / G), j = Math.floor((n - N0) / G);
+        let h = core.terrainHeight(e, n);
+        for (let di = 0; di <= 1; di++) for (let dj = 0; dj <= 1; dj++) h = Math.max(h, core.terrainHeight(E0 + (i + di) * G, N0 + (j + dj) * G));
+        return h;
+    }
     function minElevation(s) {
         // allow looking up from below the target only while the eye stays above EYE_MIN_Y over the
         // ground under the camera (the outer terrain rises into hills beyond the city blocks)
         const ce = Math.cos(Math.max(s.el, 0) * DEG);
         const camE = s.tx + s.dist * Math.sin(s.az * DEG) * ce, camN = -(s.tz - s.dist * Math.cos(s.az * DEG) * ce);
-        const floorY = Math.max(EYE_MIN_Y, core.terrainHeight(camE, camN) + EYE_MIN_Y);
+        const floorY = Math.max(EYE_MIN_Y, groundUnder(camE, camN) + EYE_MIN_Y);
         const sEye = clamp((floorY - s.ty) / Math.max(s.dist, 1e-3), -1, 1);
         return Math.max(Math.min(EL_MIN, Math.max(-60, Math.asin(sEye) / DEG)), Math.asin(sEye) / DEG);
     }

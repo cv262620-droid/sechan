@@ -58,7 +58,7 @@ for (const sc of scenarios) {
         const url = route.request().url();
         if (url.startsWith('file:') || url.startsWith('data:') || url.startsWith('blob:')) return route.continue();
         const local = cdnToLocal(url);
-        if (local) return route.fulfill({ status: 200, contentType: typeOf(local), body: readFileSync(local) });
+        if (local) return route.fulfill({ status: 200, contentType: typeOf(local), headers: { 'Access-Control-Allow-Origin': '*' }, body: readFileSync(local) });
         if (/fonts\.(googleapis|gstatic)\.com/.test(url)) return route.fulfill({ status: 200, contentType: 'text/css', body: '' });
         errors.push(`blocked external request: ${url}`);
         return route.abort();

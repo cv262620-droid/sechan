@@ -774,7 +774,7 @@ const SITE_CORE = (function () {
                 siteArea, buildingArea, gfa,
                 bcr: (buildingArea / siteArea) * 100,
                 far: (gfa / siteArea) * 100,
-                height: y, // ground floor level to roof slab, rooftop structure excluded
+                height: Math.round(y * 1000) / 1000, // ground floor level to roof slab (mm), rooftop excluded
                 floorsAbove: floors.length,
             },
         };
@@ -852,7 +852,9 @@ const SITE_CORE = (function () {
     }
 
     function fmt(v, digits) {
-        return v.toLocaleString('ko-KR', { minimumFractionDigits: digits ?? 2, maximumFractionDigits: digits ?? 2 });
+        const d = digits ?? 2;
+        if (Math.abs(v) < 0.5 * Math.pow(10, -d)) v = 0; // no "-0.0" for values that round to zero
+        return v.toLocaleString('ko-KR', { minimumFractionDigits: d, maximumFractionDigits: d });
     }
 
     return {

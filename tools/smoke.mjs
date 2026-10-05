@@ -61,7 +61,7 @@ for (const name of pages) {
                 const url = route.request().url();
                 if (url.startsWith('file:')) return route.continue();
                 const local = cdnToLocal(url);
-                if (local) return route.fulfill({ status: 200, contentType: 'application/javascript', body: readFileSync(local) });
+                if (local) return route.fulfill({ status: 200, contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' }, body: readFileSync(local) });
                 if (/fonts\.(googleapis|gstatic)\.com/.test(url)) return route.fulfill({ status: 200, contentType: 'text/css', body: '' });
                 errors.push(`blocked external request: ${url}`);
                 return route.abort();
@@ -121,7 +121,8 @@ for (const name of pages) {
                     probes.forEach((q, i) => {
                         info.colors[q.name] = toHex(got[i]);
                         const dev = Math.max(...hexRgb(q.hex).map((v, j) => Math.abs(v - got[i][j])));
-                        if (dev > 24) errors.push(`colour ${q.name}: got ${toHex(got[i])}, spec ${q.hex} (max channel diff ${dev})`);
+                        // `_` pages are UI harnesses (e.g. the Canvas2D mock): report colours, don't assert them
+                        if (dev > 24 && !name.startsWith('_')) errors.push(`colour ${q.name}: got ${toHex(got[i])}, spec ${q.hex} (max channel diff ${dev})`);
                     });
 
                     // Layers off -> fewer draw calls; then back on.
