@@ -1,0 +1,123 @@
+<div class="wb" id="studio" data-drawer="">
+  <header class="wb-top" id="top">
+    <button type="button" class="btn btn--ghost burger only-narrow" id="btn-drawer-left" aria-controls="left" aria-expanded="false" aria-label="모듈·대지 생성 패널 열기"><i></i></button>
+    <div class="brand">OHSOLV Studio <small>WORKBENCH</small></div>
+    <nav class="crumbs" aria-label="현재 작업 위치">
+      <span class="proj" id="top-project">합성 테스트 프로젝트</span>
+      <span class="opt cur" id="top-option">안 A</span>
+      <span class="crumb-rev" id="top-rev">site r1</span>
+    </nav>
+    <span class="chip chip--synth" id="top-mode" title="합성 샘플 데이터. 실제 필지·지형과 무관합니다.">SYNTHETIC</span>
+    <div class="top-spacer"></div>
+    <div class="save-state" id="save-state" role="status" aria-live="polite">
+      <span class="chip chip-ko chip--na" id="save-chip">브라우저 임시본 · 서버 저장 아님</span>
+      <span class="t" id="save-time">기록 없음</span>
+    </div>
+    <div class="top-actions only-wide">
+      <button type="button" class="btn btn--sm" id="btn-export" title="현재 리비전 목록과 초안을 JSON으로 클립보드에 복사">JSON 복사</button>
+      <button type="button" class="btn btn--sm" id="btn-import" title="복사해 둔 JSON을 붙여넣어 불러오기">JSON 붙여넣기</button>
+    </div>
+    <button type="button" class="btn btn--sm only-narrow" id="btn-drawer-right" aria-controls="inspector" aria-expanded="false">속성</button>
+  </header>
+
+  <aside class="wb-left" id="left" aria-label="모듈과 대지 생성 패널">
+    <ul class="modules" aria-label="모듈">
+      <li><div class="mod" id="mod-site" aria-current="true"><span class="code">M01</span><span>대지 생성</span><span class="chip chip-ko chip--plain">테스트</span></div></li>
+      <li><div class="mod" id="mod-analysis" aria-disabled="true"><span class="code">M02</span><span>대지 분석</span><span class="chip chip-ko chip--na">미구현</span></div></li>
+      <li><div class="mod" id="mod-mass" aria-disabled="true"><span class="code">M03</span><span>매스 생성</span><span class="chip chip-ko chip--na">미구현</span></div></li>
+      <li><div class="mod" id="mod-plan" aria-disabled="true"><span class="code">M04</span><span>기획설계</span><span class="chip chip-ko chip--na">미구현</span></div></li>
+      <li><div class="mod" id="mod-biz" aria-disabled="true"><span class="code">M05</span><span>사업성</span><span class="chip chip-ko chip--na">미구현</span></div></li>
+      <li><div class="mod" id="mod-law" aria-disabled="true"><span class="code">M06</span><span>법규 검토</span><span class="chip chip-ko chip--na">미구현</span></div></li>
+    </ul>
+
+    <div class="panel-title"><h1>대지 생성</h1><span class="mono">M01-01</span></div>
+
+    <section aria-labelledby="h-paths">
+      <div class="sect-h"><h2 id="h-paths">입력 경로</h2></div>
+      <ul class="paths">
+        <li class="path-row">
+          <div><div class="nm">직접 작성</div><div class="ds">2D에서 꼭짓점을 찍어 폐합</div></div>
+          <button type="button" class="btn btn--sm" id="btn-path-draw">그리기 <span class="key">D</span></button>
+        </li>
+        <li class="path-row">
+          <div><div class="nm">필지 선택 (MAP)</div><div class="ds">합성 필지를 눌러 초안 만들기</div></div>
+          <button type="button" class="btn btn--sm" id="btn-path-map">MAP 열기</button>
+        </li>
+        <li class="path-row">
+          <div><div class="nm">파일 불러오기</div><div class="ds">DXF · DWG</div></div>
+          <span class="chip chip-ko chip--na" id="path-file-state">미구현</span>
+        </li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="h-layers">
+      <div class="sect-h"><h2 id="h-layers">레이어</h2><span class="sub">표시만 바뀜</span></div>
+      <ul class="layers">
+        <li><label class="layer" for="layer-boundary"><input type="checkbox" id="layer-boundary" data-layer="boundary" checked><span class="sw sw--boundary"></span><span>대지경계</span><span class="note mono">USER / SYN</span></label></li>
+        <li><label class="layer" for="layer-roads"><input type="checkbox" id="layer-roads" data-layer="roads" checked><span class="sw sw--roads"></span><span>도로</span><span class="note mono">SYNTHETIC</span></label></li>
+        <li><label class="layer" for="layer-parcels"><input type="checkbox" id="layer-parcels" data-layer="parcels" checked><span class="sw sw--parcels"></span><span>필지</span><span class="note mono">SYNTHETIC</span></label></li>
+        <li><label class="layer" for="layer-context"><input type="checkbox" id="layer-context" data-layer="context" checked><span class="sw sw--context"></span><span>주변 건물</span><span class="note mono">ASSUMED</span></label></li>
+        <li><label class="layer" for="layer-terrain"><input type="checkbox" id="layer-terrain" data-layer="terrain" checked><span class="sw sw--terrain"></span><span>원경 지형</span><span class="note">3D 전용</span></label></li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="h-revs">
+      <div class="sect-h"><h2 id="h-revs">리비전</h2><span class="sub mono" id="rev-count">1개</span></div>
+      <ol class="revs" id="rev-list" reversed></ol>
+    </section>
+
+    <div class="left-foot">
+      <div>리비전과 초안은 이 브라우저에만 임시로 남습니다. 서버 저장은 없습니다.</div>
+      <div class="row only-narrow">
+        <button type="button" class="btn btn--sm" id="btn-export-m">JSON 복사</button>
+        <button type="button" class="btn btn--sm" id="btn-import-m">JSON 붙여넣기</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="wb-center" id="center">
+    <div class="tabbar" role="tablist" aria-label="캔버스">
+      <button type="button" class="tab" role="tab" id="tab-MAP" aria-controls="view-MAP" aria-selected="false" tabindex="-1">MAP <span class="ko">지도</span></button>
+      <button type="button" class="tab" role="tab" id="tab-2D" aria-controls="view-2D" aria-selected="true" tabindex="0">2D <span class="ko">도면</span></button>
+      <button type="button" class="tab" role="tab" id="tab-3D" aria-controls="view-3D" aria-selected="false" tabindex="-1">3D <span class="ko">기초 3D</span></button>
+      <div class="tab-info" id="tab-info"><span class="chip chip--synth">SYNTHETIC</span><span id="tab-info-text">로컬 평면 좌표 (m) · 기준점 37.5665N 126.9780E</span></div>
+    </div>
+    <div class="views">
+      <section class="view" id="view-MAP" role="tabpanel" aria-labelledby="tab-MAP" hidden></section>
+      <section class="view" id="view-2D" role="tabpanel" aria-labelledby="tab-2D"></section>
+      <section class="view" id="view-3D" role="tabpanel" aria-labelledby="tab-3D" hidden></section>
+    </div>
+    <div class="statusline"><span class="chip chip-ko chip--plain" id="status-tab">2D</span><span id="status-text" role="status" aria-live="polite">준비 중</span></div>
+  </main>
+
+  <aside class="wb-right" id="inspector" aria-label="속성 (Inspector)">
+    <div class="insp-head"><h2>INSPECTOR</h2><button type="button" class="btn btn--ghost btn--sm only-narrow" id="btn-close-right">닫기</button></div>
+    <div id="insp-draft"></div>
+    <div id="insp-body"></div>
+  </aside>
+
+  <footer class="wb-bottom" id="ai-bar">
+    <span class="ai-label">OHSOLV AI COMMAND</span>
+    <input class="input" id="ai-input" type="text" disabled placeholder="OHSOLV AI Command — 이 테스트에서는 비활성" aria-label="AI 요청 (이 테스트에서는 비활성)">
+    <span class="chip chip-ko chip--na">미구현</span>
+    <span class="ai-note">요청을 보내지 않습니다</span>
+  </footer>
+
+  <div class="scrim" id="scrim" hidden></div>
+
+  <div class="dialog" id="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-title" hidden>
+    <header><h2 id="dlg-title">JSON</h2><button type="button" class="btn btn--ghost btn--sm" id="dlg-close">닫기</button></header>
+    <div class="dlg-b">
+      <p id="dlg-desc"></p>
+      <label for="dlg-text" class="eyebrow" id="dlg-label">JSON</label>
+      <textarea id="dlg-text" spellcheck="false"></textarea>
+      <div class="dlg-err" id="dlg-err" role="alert"></div>
+    </div>
+    <footer>
+      <button type="button" class="btn" id="dlg-cancel">취소</button>
+      <button type="button" class="btn btn--primary" id="dlg-ok">확인</button>
+    </footer>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</div>
