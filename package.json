@@ -1,0 +1,16 @@
+{
+  "name": "sechan-web3d-mass-study",
+  "private": true,
+  "type": "module",
+  "description": "Babylon.js vs PlayCanvas test: building mass, context buildings and site in the browser",
+  "scripts": {
+    "gen": "node tools/gen-scene-data.mjs",
+    "build": "node tools/build.mjs",
+    "smoke": "node tools/build.mjs && node tools/smoke.mjs"
+  },
+  "devDependencies": {
+    "babylonjs": "9.29.0",
+    "playcanvas": "2.23.0",
+    "playwright": "1.56.1"
+  }
+}
