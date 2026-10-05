@@ -1,0 +1,206 @@
+<div id="app" class="app">
+  <canvas id="scene" aria-label="3D 장면: 계획 건물 매스와 주변 건물, 주변 대지"></canvas>
+
+  <p id="hint" class="hint">
+    <span class="hint-mouse">드래그 회전 · 우클릭/Shift 드래그 이동 · 휠 줌 · 클릭 층 정보</span>
+    <span class="hint-touch">한 손가락 회전 · 두 손가락 줌/이동 · 탭 층 정보</span>
+  </p>
+
+  <div id="compass" class="compass" role="img" aria-label="방위표">
+    <svg viewBox="-32 -32 64 64" aria-hidden="true" focusable="false">
+      <circle class="c-ring" r="17"></circle>
+      <g id="compass-needle">
+        <path class="c-tick" d="M17 0H21M-17 0H-21M0 17V21"></path>
+        <path class="c-s" d="M0 13L5 0H-5Z"></path>
+        <path class="c-n" d="M0 -15L5 0H-5Z"></path>
+        <text class="c-label" x="0" y="-25">N</text>
+      </g>
+    </svg>
+  </div>
+
+  <div id="floor-card" class="floor-card" hidden>
+    <span class="fc-swatch" aria-hidden="true"></span>
+    <div class="fc-text" role="status" aria-live="polite">
+      <p class="fc-title"><b id="fc-label" class="num">—</b> · <span id="fc-use">—</span></p>
+      <p class="fc-meta"><span class="kv">바닥면적 <span id="fc-area" class="num">—</span>㎡</span> · <span class="kv">FL <span id="fc-fl" class="num">—</span> m</span> · <span class="kv">층고 <span id="fc-fh" class="num">—</span> m</span></p>
+    </div>
+    <button type="button" id="fc-close" class="icon-btn" aria-label="층 선택 해제"><span class="ico-x" aria-hidden="true"></span></button>
+  </div>
+
+  <aside id="panel" class="panel" data-expanded="false" aria-label="매스 스터디 패널">
+    <div class="sheet-bar">
+      <p id="sheet-summary" class="sheet-sum">
+        <span>연면적 <b id="sum-gfa" class="num">—</b>㎡</span>
+        <span>용적률 <b id="sum-far" class="num">—</b>%</span>
+        <span>높이 <b id="sum-height" class="num">—</b>m</span>
+      </p>
+      <button type="button" id="sheet-toggle" class="btn sheet-toggle" aria-expanded="false" aria-controls="panel-body"><span id="sheet-toggle-text">펼치기</span><span class="ico-chev" aria-hidden="true"></span></button>
+    </div>
+
+    <div id="panel-body" class="panel-body">
+      <header class="tb">
+        <div class="tb-head">
+          <p class="label">도면명</p>
+          <h1 class="tb-title">가상대지 매스 스터디</h1>
+        </div>
+        <dl class="tb-grid">
+          <div>
+            <dt class="label">렌더러</dt>
+            <dd><span id="engine-badge" class="badge">—</span></dd>
+          </div>
+          <div>
+            <dt class="label">일영 기준점 · 서울</dt>
+            <dd id="tb-loc" class="num">37.57°N 126.98°E</dd>
+          </div>
+        </dl>
+        <p class="tb-note">대지, 주변 건물, 지형은 생성된 가상 데이터입니다.</p>
+      </header>
+
+      <details id="sec-area" class="sec" open>
+        <summary class="sec-h"><h2 class="sec-ko">면적표</h2><span class="sec-en">Area schedule</span><span class="sec-tog" aria-hidden="true"></span></summary>
+        <div class="sec-body">
+          <table class="area" id="area-table">
+            <caption class="sr-only">면적표 (단순 산정)</caption>
+            <tbody>
+              <tr><th scope="row">대지면적</th><td id="m-siteArea" class="num">—</td><td class="u">㎡</td></tr>
+              <tr><th scope="row">건축면적</th><td id="m-buildingArea" class="num">—</td><td class="u">㎡</td></tr>
+              <tr class="major"><th scope="row">연면적(지상)</th><td id="m-gfa" class="num">—</td><td class="u">㎡</td></tr>
+              <tr class="sub"><th scope="row">저층부 <span id="m-podN" class="num">—</span>개 층</th><td id="m-podA" class="num">—</td><td class="u">㎡</td></tr>
+              <tr class="sub"><th scope="row">고층부 <span id="m-towN" class="num">—</span>개 층</th><td id="m-towA" class="num">—</td><td class="u">㎡</td></tr>
+              <tr><th scope="row">건폐율</th><td id="m-bcr" class="num">—</td><td class="u">%</td></tr>
+              <tr class="major"><th scope="row">용적률</th><td id="m-far" class="num">—</td><td class="u">%</td></tr>
+              <tr><th scope="row">최고높이 <small>(옥탑 제외)</small></th><td id="m-height" class="num">—</td><td class="u">m</td></tr>
+              <tr><th scope="row">층수</th><td id="m-floors" class="num">—</td><td class="u">층</td></tr>
+            </tbody>
+          </table>
+          <p class="foot">※ 단순 산정 — 법정 산입·제외 항목 미반영</p>
+        </div>
+      </details>
+
+      <details id="sec-mass" class="sec" open>
+        <summary class="sec-h"><h2 class="sec-ko">매스</h2><span class="sec-en">Massing</span><span class="sec-tog" aria-hidden="true"></span></summary>
+        <div class="sec-body">
+          <fieldset class="grp">
+            <legend><span class="chip chip-podium" aria-hidden="true"></span>저층부 <span class="grp-use">근린생활시설</span></legend>
+            <div class="ctl">
+              <label for="in-podiumFloors">층수</label>
+              <input type="range" id="in-podiumFloors" data-key="podiumFloors" min="1" max="5" step="1" value="3" autocomplete="off">
+              <output id="out-podiumFloors" for="in-podiumFloors" class="num">—</output>
+            </div>
+            <div class="ctl">
+              <label for="in-podiumFH">층고</label>
+              <input type="range" id="in-podiumFH" data-key="podiumFH" min="3.6" max="5.4" step="0.1" value="4.2" autocomplete="off">
+              <output id="out-podiumFH" for="in-podiumFH" class="num">—</output>
+            </div>
+          </fieldset>
+          <fieldset class="grp">
+            <legend><span class="chip chip-tower" aria-hidden="true"></span>고층부 <span class="grp-use">업무시설</span></legend>
+            <div class="ctl">
+              <label for="in-towerFloors">층수</label>
+              <input type="range" id="in-towerFloors" data-key="towerFloors" min="0" max="30" step="1" value="12" autocomplete="off">
+              <output id="out-towerFloors" for="in-towerFloors" class="num">—</output>
+            </div>
+            <div class="ctl">
+              <label for="in-towerFH">층고</label>
+              <input type="range" id="in-towerFH" data-key="towerFH" min="3.3" max="4.5" step="0.1" value="3.9" autocomplete="off">
+              <output id="out-towerFH" for="in-towerFH" class="num">—</output>
+            </div>
+          </fieldset>
+          <div class="row-end">
+            <button type="button" id="btn-mass-reset" class="btn">기본값으로 되돌리기</button>
+          </div>
+        </div>
+      </details>
+
+      <details id="sec-sun" class="sec" open>
+        <summary class="sec-h"><h2 class="sec-ko">일영</h2><span class="sec-en">Sun &amp; shadow</span><span class="sec-tog" aria-hidden="true"></span></summary>
+        <div class="sec-body">
+          <div class="seg" role="radiogroup" aria-label="기준일">
+            <input type="radio" name="sun-preset" id="sun-winter" value="winter" checked autocomplete="off"><label for="sun-winter">동지<small id="sun-winter-date">12.22</small></label>
+            <input type="radio" name="sun-preset" id="sun-equinox" value="equinox" autocomplete="off"><label for="sun-equinox">춘·추분<small id="sun-equinox-date">3.20</small></label>
+            <input type="radio" name="sun-preset" id="sun-summer" value="summer" autocomplete="off"><label for="sun-summer">하지<small id="sun-summer-date">6.21</small></label>
+          </div>
+          <div class="time-row">
+            <div class="time-read">
+              <span id="out-date" class="label">12월 22일</span>
+              <output id="out-hour" for="in-hour" class="time num">12:30</output>
+            </div>
+            <span id="sun-state" class="state-chip" hidden>해가 진 시간</span>
+            <button type="button" id="btn-play" class="btn btn-play" aria-pressed="false"><span class="ico-play" aria-hidden="true"></span><span id="btn-play-text">재생</span></button>
+          </div>
+          <div class="time-scale">
+            <label for="in-hour" class="sr-only">시각 (06:00–19:00)</label>
+            <input type="range" id="in-hour" min="360" max="1140" step="10" value="750" autocomplete="off">
+            <div class="ticks" aria-hidden="true">
+              <span style="--p:0">06</span><span style="--p:0.2308">09</span><span style="--p:0.4615">12</span><span style="--p:0.6923">15</span><span style="--p:0.9231">18</span>
+            </div>
+          </div>
+          <dl id="sun-read" class="sun-read">
+            <div><dt class="label">태양고도</dt><dd id="out-alt" class="num">—</dd></div>
+            <div><dt class="label">방위각</dt><dd><span id="out-az" class="num">—</span> <span id="out-az-dir" class="dir">—</span></dd></div>
+            <div><dt class="label">그림자 길이</dt><dd id="out-shadow" class="num">—</dd></div>
+          </dl>
+          <p class="foot">그림자 길이는 평지에서 최고높이 기준. 방위각은 북=0°, 시계방향.</p>
+        </div>
+      </details>
+
+      <details id="sec-view" class="sec" open>
+        <summary class="sec-h"><h2 class="sec-ko">보기</h2><span class="sec-en">View</span><span class="sec-tog" aria-hidden="true"></span></summary>
+        <div class="sec-body">
+          <div class="seg" role="group" aria-label="카메라 시점">
+            <button type="button" id="view-aerial" data-view="aerial" aria-pressed="true">조감</button>
+            <button type="button" id="view-pedestrian" data-view="pedestrian" aria-pressed="false">보행자</button>
+            <button type="button" id="view-top" data-view="top" aria-pressed="false">평면</button>
+            <button type="button" id="view-north" data-view="north" aria-pressed="false">북측</button>
+          </div>
+          <div class="toggles" role="group" aria-label="표시 레이어">
+            <label class="tg" for="layer-context"><input type="checkbox" id="layer-context" data-layer="context" checked autocomplete="off"><span>주변 건물</span></label>
+            <label class="tg" for="layer-trees"><input type="checkbox" id="layer-trees" data-layer="trees" checked autocomplete="off"><span>가로수</span></label>
+            <label class="tg" for="layer-shadows"><input type="checkbox" id="layer-shadows" data-layer="shadows" checked autocomplete="off"><span>그림자</span></label>
+            <label class="tg" for="layer-terrain"><input type="checkbox" id="layer-terrain" data-layer="terrain" checked autocomplete="off"><span>원경 지형</span></label>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <footer class="status" aria-label="렌더링 상태">
+      <span id="st-engine">—</span>
+      <span>fps <b id="st-fps" class="num">—</b></span>
+      <span>드로우콜 <b id="st-draws" class="num">—</b></span>
+      <span>로드 <b id="st-load" class="num">—</b> ms</span>
+    </footer>
+  </aside>
+
+  <div id="splash" class="splash" role="status" aria-live="polite">
+    <div class="splash-card">
+      <p class="label">가상대지 매스 스터디</p>
+      <p id="splash-msg" class="splash-msg">장면 생성 중…</p>
+      <div class="splash-bar" aria-hidden="true"></div>
+    </div>
+  </div>
+
+  <div id="error" class="splash is-error" role="alert" hidden>
+    <div class="splash-card">
+      <p class="label">가상대지 매스 스터디</p>
+      <p class="splash-msg">3D 엔진을 불러오지 못했습니다</p>
+      <p id="error-reason" class="splash-reason">—</p>
+      <p class="splash-help">페이지를 새로 고쳐 보세요. 계속되면 WebGL2를 지원하는 최신 Chrome, Edge, Safari, Firefox에서 열어 주세요.</p>
+    </div>
+  </div>
+</div>
+<script>
+// Early guard: if a later script fails to load or parse before the app is ready (startApp never runs),
+// show the error panel instead of an endless loading state. startApp() clears it once the scene is ready.
+(function () {
+  window.addEventListener('error', function (e) {
+    if (window.__app && window.__app.ready) return;
+    var box = document.getElementById('error'), splash = document.getElementById('splash'), why = document.getElementById('error-reason');
+    if (!box || !box.hidden) return;
+    var t = e.target;
+    var msg = t && t.tagName === 'SCRIPT' && t.src ? '스크립트를 불러오지 못했습니다: ' + t.src : (e.message || '스크립트 오류');
+    if (why) why.textContent = msg;
+    box.hidden = false;
+    if (splash) splash.hidden = true;
+  }, true);
+})();
+</script>

@@ -1,0 +1,1649 @@
+<title>Mock 매스 스터디</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans+KR:wght@400;500;600&amp;display=swap">
+<style>
+/* Layout: full-bleed 3D canvas; a 340px drawing-sheet panel (표제란 + 면적표) floats left, becomes a bottom sheet at ≤640px; 방위표 top-right, 층 카드 under it. */
+:root {
+  --paper: #f5f5f2;        /* sheet */
+  --ink: #1e2226;          /* graphite: text, frame rules */
+  --ink-soft: #5f656b;     /* secondary text */
+  --rule: #d0d2d1;         /* hairlines */
+  --accent: #2560c4;       /* drafting blue: what you set */
+  --ground: #d6dadd;       /* behind the canvas */
+  --font-display: 'IBM Plex Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif;
+  --font-body: 'IBM Plex Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'IBM Plex Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', monospace;
+
+  /* derived */
+  --paper-glass: rgb(245 245 242 / .9);
+  --rule-strong: #8f9498;
+  --wash: #e8e9e7;
+  --on-accent: #ffffff;
+  --danger: #b3261e;
+  --shadow: 0 1px 2px rgb(20 24 28 / .10), 0 10px 28px rgb(20 24 28 / .16);
+  /* scene colours: fixed, the 3D scene does not follow the theme */
+  --scene-podium: #c98d4b;
+  --scene-tower: #d9a35f;
+  --scene-select: #2f7de1;
+
+  --fs-xs: .6875rem;   /* 11 */
+  --fs-sm: .75rem;     /* 12 */
+  --fs-md: .8125rem;   /* 13 */
+  --fs-lg: 1.1875rem;  /* 19 */
+  --fs-xl: 1.5rem;     /* 24 */
+  --gutter: 16px;
+  --panel-w: 340px;
+  --compass: 64px;
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #1b1e21; --ink: #e4e5e1; --ink-soft: #9ba1a6; --rule: #343a3f; --accent: #77a6ef; --ground: #101214;
+    --paper-glass: rgb(27 30 33 / .9); --rule-strong: #687076; --wash: #262a2e; --on-accent: #0c1420; --danger: #f08a82;
+    --shadow: 0 1px 2px rgb(0 0 0 / .45), 0 10px 28px rgb(0 0 0 / .5);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #1b1e21; --ink: #e4e5e1; --ink-soft: #9ba1a6; --rule: #343a3f; --accent: #77a6ef; --ground: #101214;
+  --paper-glass: rgb(27 30 33 / .9); --rule-strong: #687076; --wash: #262a2e; --on-accent: #0c1420; --danger: #f08a82;
+  --shadow: 0 1px 2px rgb(0 0 0 / .45), 0 10px 28px rgb(0 0 0 / .5);
+  color-scheme: dark;
+}
+
+[hidden] { display: none !important; }
+body { background: var(--ground); color: var(--ink); overflow: hidden; -webkit-text-size-adjust: 100%; }
+.app {
+  position: fixed; inset: 0; overflow: hidden;
+  font-family: var(--font-body); font-size: var(--fs-md); line-height: 1.45; color: var(--ink);
+  word-break: keep-all; overflow-wrap: break-word;
+}
+.app *, .app *::before, .app *::after { box-sizing: border-box; }
+/* zero-specificity reset so component classes (.num, .time, .btn) always win */
+:where(.app) :where(button, input, output) { font: inherit; color: inherit; }
+.app :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; -webkit-tap-highlight-color: transparent; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.label { margin: 0; font-size: var(--fs-xs); font-weight: 500; letter-spacing: .06em; color: var(--ink-soft); }
+
+/* ---------- panel (drawing sheet) ---------- */
+.panel {
+  position: absolute; z-index: 4;
+  left: var(--gutter); top: calc(var(--gutter) + var(--safe-t));
+  width: min(var(--panel-w), calc(100% - 2 * var(--gutter)));
+  max-height: calc(100% - 2 * var(--gutter) - var(--safe-t) - var(--safe-b));
+  display: flex; flex-direction: column;
+  background: var(--paper); color: var(--ink);
+  border: 1px solid var(--ink);
+  box-shadow: var(--shadow);
+}
+.panel-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: var(--rule-strong) transparent;
+}
+/* fade at the scroll edge: says "more below" without a visible scrollbar */
+.panel-body::after {
+  content: ""; position: sticky; bottom: 0; display: block; height: 18px; margin-top: -18px;
+  background: linear-gradient(to bottom, transparent, var(--paper)); pointer-events: none;
+}
+.sheet-bar { display: none; }
+
+/* 표제란 */
+.tb { padding: 14px 16px 12px; display: grid; gap: 10px; }
+.tb-head { display: grid; gap: 2px; }
+.tb-title { margin: 0; font: 600 var(--fs-lg)/1.25 var(--font-display); letter-spacing: -.01em; text-wrap: balance; }
+.tb-grid { margin: 0; display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.tb-grid > div { padding: 6px 0 7px; min-width: 0; display: grid; gap: 3px; }
+.tb-grid > div + div { border-left: 1px solid var(--rule); padding-left: 10px; }
+.tb-grid dd { margin: 0; font-size: var(--fs-sm); }
+.badge {
+  display: inline-block; padding: 1px 6px; border: 1px solid var(--ink);
+  font: 500 var(--fs-xs)/1.5 var(--font-mono); letter-spacing: .02em; white-space: nowrap;
+}
+.tb-note { margin: 0; font-size: var(--fs-sm); color: var(--ink-soft); }
+
+/* sections */
+.sec { border-top: 1px solid var(--ink); }
+.sec-h {
+  list-style: none; display: flex; align-items: baseline; gap: 8px;
+  padding: 9px 16px 8px; cursor: pointer; user-select: none;
+}
+.sec-h::-webkit-details-marker { display: none; }
+.sec-h:hover .sec-ko { color: var(--accent); }
+.sec-h:focus-visible { outline-offset: -2px; }
+.sec-ko { margin: 0; font-size: var(--fs-md); font-weight: 600; }
+.sec-en { font: 500 var(--fs-xs) var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); }
+.sec-tog { margin-left: auto; align-self: center; position: relative; width: 9px; height: 9px; flex: none; }
+.sec-tog::before, .sec-tog::after { content: ""; position: absolute; background: var(--ink-soft); }
+.sec-tog::before { left: 0; right: 0; top: 4px; height: 1px; }
+.sec-tog::after { top: 0; bottom: 0; left: 4px; width: 1px; }
+.sec[open] .sec-tog::after { display: none; }
+.sec-body { padding: 2px 16px 14px; display: grid; gap: 10px; }
+.foot { margin: 0; font-size: var(--fs-xs); color: var(--ink-soft); }
+
+/* 면적표 */
+.area { width: 100%; border-collapse: collapse; border-top: 1px solid var(--rule-strong); }
+.area tr { border-bottom: 1px solid var(--rule); }
+.area th, .area td { padding: 4px 0; vertical-align: baseline; }
+.area th { text-align: left; font-weight: 400; }
+.area th small { font-size: var(--fs-xs); color: var(--ink-soft); }
+.area td.num { text-align: right; font-size: var(--fs-md); white-space: nowrap; }
+.area td.u { width: 2.4em; padding-left: 6px; font-size: var(--fs-sm); color: var(--ink-soft); }
+.area tr.major th, .area tr.major td.num { font-weight: 600; }
+.area tr.sub th, .area tr.sub td { padding-top: 1px; padding-bottom: 3px; font-size: var(--fs-sm); color: var(--ink-soft); }
+.area tr.sub th { padding-left: 14px; position: relative; }
+.area tr.sub th::before { content: ""; position: absolute; left: 3px; top: 0; height: .8em; width: 6px; border-left: 1px solid var(--rule-strong); border-bottom: 1px solid var(--rule-strong); }
+
+/* 매스 */
+.grp { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: 0; }
+.grp legend { padding: 0; margin-bottom: 2px; display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); font-weight: 600; }
+.grp-use { font-weight: 400; color: var(--ink-soft); }
+.chip { width: 10px; height: 10px; flex: none; }
+.chip-podium { background: var(--scene-podium); }
+.chip-tower { background: var(--scene-tower); }
+.ctl { display: grid; grid-template-columns: 2.6em minmax(0, 1fr) 4.4em; align-items: center; gap: 10px; min-height: 30px; }
+.ctl label { font-size: var(--fs-sm); color: var(--ink-soft); }
+.ctl output { text-align: right; font-size: var(--fs-md); white-space: nowrap; }
+.row-end { display: flex; justify-content: flex-end; }
+
+/* range: hairline track, rectangular thumb */
+.app input[type="range"] {
+  --fill: 50%;
+  -webkit-appearance: none; appearance: none;
+  width: 100%; min-width: 0; height: 24px; margin: 0; padding: 0; background: transparent; cursor: pointer;
+}
+.app input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px; border: 0;
+  background: linear-gradient(90deg, var(--accent) 0 var(--fill), var(--rule) var(--fill) 100%);
+}
+.app input[type="range"]::-moz-range-track { height: 3px; background: var(--rule); border: 0; }
+.app input[type="range"]::-moz-range-progress { height: 3px; background: var(--accent); }
+.app input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; box-sizing: border-box;
+  width: 11px; height: 19px; margin-top: -8px;
+  background: var(--paper); border: 2px solid var(--accent); border-radius: 1px;
+}
+.app input[type="range"]::-moz-range-thumb {
+  box-sizing: border-box; width: 11px; height: 19px;
+  background: var(--paper); border: 2px solid var(--accent); border-radius: 1px;
+}
+.app input[type="range"]:focus-visible { outline-offset: 1px; }
+
+/* buttons */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 30px; padding: 4px 11px;
+  font-size: var(--fs-sm); font-weight: 500;
+  background: transparent; border: 1px solid var(--rule-strong); border-radius: 1px; cursor: pointer;
+}
+.btn:hover { background: var(--wash); }
+.icon-btn {
+  display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
+  background: transparent; border: 1px solid transparent; border-radius: 1px; cursor: pointer; color: var(--ink-soft);
+}
+.icon-btn:hover { border-color: var(--rule-strong); color: var(--ink); }
+.ico-x { position: relative; width: 12px; height: 12px; }
+.ico-x::before, .ico-x::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1.5px; margin-left: -.75px; background: currentColor; }
+.ico-x::before { transform: rotate(45deg); }
+.ico-x::after { transform: rotate(-45deg); }
+
+/* segmented control (radios or pressed buttons) */
+.seg { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); border: 1px solid var(--rule-strong); }
+.seg > input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+.seg > label, .seg > button {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0;
+  min-height: 36px; padding: 4px 2px; border: 0; border-radius: 0; background: transparent;
+  font-size: var(--fs-sm); font-weight: 500; line-height: 1.25; text-align: center; cursor: pointer;
+}
+.seg > label ~ label, .seg > button ~ button { border-left: 1px solid var(--rule-strong); }
+.seg > label small { font: 400 var(--fs-xs) var(--font-mono); color: var(--ink-soft); }
+.seg > label:hover, .seg > button:hover { background: var(--wash); }
+.seg > input:checked + label, .seg > button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.seg > input:checked + label small { color: inherit; opacity: .85; }
+.seg > input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 2px; position: relative; z-index: 1; }
+.seg > button:focus-visible { position: relative; z-index: 1; }
+
+/* 일영 */
+.time-row { display: flex; align-items: flex-end; gap: 10px; }
+.time-read { display: grid; gap: 1px; }
+.time { font-size: var(--fs-xl); font-weight: 500; line-height: 1.1; letter-spacing: -.01em; }
+.state-chip {
+  align-self: center; padding: 2px 7px; font-size: var(--fs-xs); font-weight: 500;
+  border: 1px solid var(--ink-soft); color: var(--ink); white-space: nowrap;
+}
+.btn-play { margin-left: auto; min-width: 72px; }
+.btn-play[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.ico-play { width: 0; height: 0; border-left: 8px solid currentColor; border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
+.btn-play[aria-pressed="true"] .ico-play { width: 9px; height: 9px; border: 0; background: currentColor; }
+.time-scale { display: grid; gap: 0; }
+.ticks { position: relative; height: 14px; font: 400 var(--fs-xs)/1 var(--font-mono); color: var(--ink-soft); }
+.ticks span { position: absolute; top: 4px; left: calc(5.5px + (100% - 11px) * var(--p)); transform: translateX(-50%); }
+.ticks span::before { content: ""; position: absolute; left: 50%; top: -5px; height: 3px; border-left: 1px solid var(--rule-strong); }
+.sun-read { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.sun-read > div { padding: 6px 0 7px; display: grid; gap: 2px; min-width: 0; }
+.sun-read > div + div { border-left: 1px solid var(--rule); padding-left: 10px; }
+.sun-read dd { margin: 0; font-size: var(--fs-md); white-space: nowrap; }
+.sun-read .dir { font-size: var(--fs-xs); color: var(--ink-soft); }
+.sun-read.is-night dd { color: var(--ink-soft); }
+
+/* 보기 */
+.toggles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 12px; }
+.tg { display: flex; align-items: center; gap: 8px; min-height: 28px; cursor: pointer; }
+.tg input {
+  -webkit-appearance: none; appearance: none; flex: none;
+  width: 15px; height: 15px; margin: 0; display: grid; place-content: center;
+  background: var(--paper); border: 1px solid var(--rule-strong); border-radius: 1px; cursor: pointer;
+}
+.tg input::before {
+  content: ""; width: 8px; height: 4px; margin-top: -2px;
+  border-left: 2px solid var(--on-accent); border-bottom: 2px solid var(--on-accent);
+  transform: rotate(-45deg); opacity: 0;
+}
+.tg input:checked { background: var(--accent); border-color: var(--accent); }
+.tg input:checked::before { opacity: 1; }
+.tg:hover input:not(:checked) { border-color: var(--ink); }
+
+/* status line */
+.status {
+  flex: none; display: flex; flex-wrap: wrap; gap: 2px 12px; padding: 6px 16px 7px;
+  border-top: 1px solid var(--ink);
+  font: 400 var(--fs-xs)/1.4 var(--font-mono); color: var(--ink-soft);
+}
+.status b { font-weight: 500; color: var(--ink); }
+#st-engine { color: var(--ink); }
+
+/* ---------- overlays on the canvas ---------- */
+.compass {
+  position: absolute; z-index: 3; top: calc(var(--gutter) + var(--safe-t)); right: var(--gutter);
+  width: var(--compass); height: var(--compass); border-radius: 50%;
+  background: var(--paper-glass); border: 1px solid var(--rule-strong); box-shadow: var(--shadow);
+  pointer-events: none;
+}
+.compass svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.c-ring { fill: none; stroke: var(--rule-strong); stroke-width: 1; }
+.c-tick { stroke: var(--rule-strong); stroke-width: 1; fill: none; }
+.c-n { fill: var(--ink); }
+.c-s { fill: var(--paper); stroke: var(--ink); stroke-width: 1; stroke-linejoin: round; }
+.c-label { fill: var(--ink); font: 600 11px var(--font-mono); text-anchor: middle; dominant-baseline: central; }
+
+.floor-card {
+  position: absolute; z-index: 3;
+  top: calc(var(--gutter) + var(--safe-t) + var(--compass) + 10px); right: var(--gutter);
+  width: max-content; max-width: min(400px, calc(100% - 2 * var(--gutter)));
+  display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 10px; align-items: start;
+  padding: 10px 8px 10px 12px;
+  background: var(--paper); border: 1px solid var(--ink); box-shadow: var(--shadow);
+}
+.fc-swatch { width: 10px; height: 10px; margin-top: 6px; background: var(--scene-select); }
+.fc-text { min-width: 0; }
+.fc-title { margin: 0; font-size: .9375rem; font-weight: 600; }
+.fc-meta { margin: 2px 0 0; font-size: var(--fs-sm); color: var(--ink-soft); }
+.fc-meta .num { color: var(--ink); }
+.fc-meta .kv { white-space: nowrap; }
+
+.hint {
+  position: absolute; z-index: 1; right: var(--gutter); bottom: calc(var(--gutter) + var(--safe-b));
+  max-width: calc(100% - 2 * var(--gutter)); margin: 0; padding: 3px 8px;
+  font-size: var(--fs-xs); color: var(--ink-soft);
+  background: var(--paper-glass); border: 1px solid var(--rule); pointer-events: none;
+}
+.hint-touch { display: none; }
+@media (max-width: 640px), (hover: none) and (pointer: coarse) {
+  .hint-mouse { display: none; }
+  .hint-touch { display: inline; }
+}
+
+/* ---------- loading / error ---------- */
+.splash { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center; padding: 16px; background: var(--ground); }
+.splash-card {
+  width: min(440px, 100%); display: grid; gap: 8px; padding: 18px 20px 20px;
+  background: var(--paper); border: 1px solid var(--ink); box-shadow: var(--shadow);
+}
+.splash-msg { margin: 0; font-size: 1.0625rem; font-weight: 600; }
+.splash-bar { position: relative; height: 2px; margin-top: 4px; overflow: hidden; background: var(--rule); }
+.splash-bar::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 28%;
+  background: var(--accent); animation: splash-run 1.3s ease-in-out infinite;
+}
+@keyframes splash-run { from { transform: translateX(-100%); } to { transform: translateX(360%); } }
+.is-error .splash-msg { color: var(--danger); }
+.splash-reason {
+  margin: 0; padding: 8px 10px; background: var(--wash); border-left: 2px solid var(--danger);
+  font: 400 var(--fs-sm)/1.5 var(--font-mono); overflow-wrap: anywhere;
+}
+.splash-help { margin: 0; font-size: var(--fs-sm); color: var(--ink-soft); }
+
+/* ---------- phone: bottom sheet ---------- */
+@media (max-width: 640px) {
+  :root { --compass: 56px; }
+  .panel {
+    top: auto; bottom: calc(12px + var(--safe-b));
+    left: var(--gutter); right: var(--gutter); width: auto;
+    max-height: 55%;
+  }
+  .sheet-bar { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 12px; min-height: 46px; flex: none; }
+  .panel[data-expanded="true"] .sheet-bar { border-bottom: 1px solid var(--ink); }
+  .panel[data-expanded="false"] .panel-body,
+  .panel[data-expanded="false"] .status { display: none; }
+  .sheet-sum { flex: 1 1 auto; min-width: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0 10px; font-size: var(--fs-sm); color: var(--ink-soft); }
+  .sheet-sum span { white-space: nowrap; }
+  .sheet-sum b { font-weight: 600; color: var(--ink); }
+  .sheet-toggle { flex: none; min-height: 34px; padding: 4px 10px; }
+  .ico-chev { width: 7px; height: 7px; margin-top: 3px; border-left: 1.5px solid currentColor; border-top: 1.5px solid currentColor; transform: rotate(45deg); }
+  .panel[data-expanded="true"] .ico-chev { margin-top: -3px; transform: rotate(225deg); }
+  .tb { padding-top: 12px; }
+  .hint {
+    right: auto; bottom: auto; left: var(--gutter); top: calc(var(--gutter) + var(--safe-t));
+    max-width: calc(100% - 2 * var(--gutter) - var(--compass) - 10px);
+  }
+  .floor-card {
+    top: calc(var(--gutter) + var(--safe-t)); left: var(--gutter);
+    right: calc(var(--gutter) + var(--compass) + 10px); width: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app *, .app *::before, .app *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+</style>
+
+<div id="app" class="app">
+  <canvas id="scene" aria-label="3D 장면: 계획 건물 매스와 주변 건물, 주변 대지"></canvas>
+
+  <p id="hint" class="hint">
+    <span class="hint-mouse">드래그 회전 · 우클릭/Shift 드래그 이동 · 휠 줌 · 클릭 층 정보</span>
+    <span class="hint-touch">한 손가락 회전 · 두 손가락 줌/이동 · 탭 층 정보</span>
+  </p>
+
+  <div id="compass" class="compass" role="img" aria-label="방위표">
+    <svg viewBox="-32 -32 64 64" aria-hidden="true" focusable="false">
+      <circle class="c-ring" r="17"></circle>
+      <g id="compass-needle">
+        <path class="c-tick" d="M17 0H21M-17 0H-21M0 17V21"></path>
+        <path class="c-s" d="M0 13L5 0H-5Z"></path>
+        <path class="c-n" d="M0 -15L5 0H-5Z"></path>
+        <text class="c-label" x="0" y="-25">N</text>
+      </g>
+    </svg>
+  </div>
+
+  <div id="floor-card" class="floor-card" hidden>
+    <span class="fc-swatch" aria-hidden="true"></span>
+    <div class="fc-text" role="status" aria-live="polite">
+      <p class="fc-title"><b id="fc-label" class="num">—</b> · <span id="fc-use">—</span></p>
+      <p class="fc-meta"><span class="kv">바닥면적 <span id="fc-area" class="num">—</span>㎡</span> · <span class="kv">FL <span id="fc-fl" class="num">—</span> m</span> · <span class="kv">층고 <span id="fc-fh" class="num">—</span> m</span></p>
+    </div>
+    <button type="button" id="fc-close" class="icon-btn" aria-label="층 선택 해제"><span class="ico-x" aria-hidden="true"></span></button>
+  </div>
+
+  <aside id="panel" class="panel" data-expanded="false" aria-label="매스 스터디 패널">
+    <div class="sheet-bar">
+      <p id="sheet-summary" class="sheet-sum">
+        <span>연면적 <b id="sum-gfa" class="num">—</b>㎡</span>
+        <span>용적률 <b id="sum-far" class="num">—</b>%</span>
+        <span>높이 <b id="sum-height" class="num">—</b>m</span>
+      </p>
+      <button type="button" id="sheet-toggle" class="btn sheet-toggle" aria-expanded="false" aria-controls="panel-body"><span id="sheet-toggle-text">펼치기</span><span class="ico-chev" aria-hidden="true"></span></button>
+    </div>
+
+    <div id="panel-body" class="panel-body">
+      <header class="tb">
+        <div class="tb-head">
+          <p class="label">도면명</p>
+          <h1 class="tb-title">가상대지 매스 스터디</h1>
+        </div>
+        <dl class="tb-grid">
+          <div>
+            <dt class="label">렌더러</dt>
+            <dd><span id="engine-badge" class="badge">—</span></dd>
+          </div>
+          <div>
+            <dt class="label">일영 기준점 · 서울</dt>
+            <dd id="tb-loc" class="num">37.57°N 126.98°E</dd>
+          </div>
+        </dl>
+        <p class="tb-note">대지, 주변 건물, 지형은 생성된 가상 데이터입니다.</p>
+      </header>
+
+      <details id="sec-area" class="sec" open>
+        <summary class="sec-h"><h2 class="sec-ko">면적표</h2><span class="sec-en">Area schedule</span><span class="sec-tog" aria-hidden="true"></span></summary>
+        <div class="sec-body">
+          <table class="area" id="area-table">
+            <caption class="sr-only">면적표 (단순 산정)</caption>
+            <tbody>
+              <tr><th scope="row">대지면적</th><td id="m-siteArea" class="num">—</td><td class="u">㎡</td></tr>
+              <tr><th scope="row">건축면적</th><td id="m-buildingArea" class="num">—</td><td class="u">㎡</td></tr>
+              <tr class="major"><th scope="row">연면적(지상)</th><td id="m-gfa" class="num">—</td><td class="u">㎡</td></tr>
+              <tr class="sub"><th scope="row">저층부 <span id="m-podN" class="num">—</span>개 층</th><td id="m-podA" class="num">—</td><td class="u">㎡</td></tr>
+              <tr class="sub"><th scope="row">고층부 <span id="m-towN" class="num">—</span>개 층</th><td id="m-towA" class="num">—</td><td class="u">㎡</td></tr>
+              <tr><th scope="row">건폐율</th><td id="m-bcr" class="num">—</td><td class="u">%</td></tr>
+              <tr class="major"><th scope="row">용적률</th><td id="m-far" class="num">—</td><td class="u">%</td></tr>
+              <tr><th scope="row">최고높이 <small>(옥탑 제외)</small></th><td id="m-height" class="num">—</td><td class="u">m</td></tr>
+              <tr><th scope="row">층수</th><td id="m-floors" class="num">—</td><td class="u">층</td></tr>
+            </tbody>
+          </table>
+          <p class="foot">※ 단순 산정 — 법정 산입·제외 항목 미반영</p>
+        </div>
+      </details>
+
+      <details id="sec-mass" class="sec" open>
+        <summary class="sec-h"><h2 class="sec-ko">매스</h2><span class="sec-en">Massing</span><span class="sec-tog" aria-hidden="true"></span></summary>
+        <div class="sec-body">
+          <fieldset class="grp">
+            <legend><span class="chip chip-podium" aria-hidden="true"></span>저층부 <span class="grp-use">근린생활시설</span></legend>
+            <div class="ctl">
+              <label for="in-podiumFloors">층수</label>
+              <input type="range" id="in-podiumFloors" data-key="podiumFloors" min="1" max="5" step="1" value="3" autocomplete="off">
+              <output id="out-podiumFloors" for="in-podiumFloors" class="num">—</output>
+            </div>
+            <div class="ctl">
+              <label for="in-podiumFH">층고</label>
+              <input type="range" id="in-podiumFH" data-key="podiumFH" min="3.6" max="5.4" step="0.1" value="4.2" autocomplete="off">
+              <output id="out-podiumFH" for="in-podiumFH" class="num">—</output>
+            </div>
+          </fieldset>
+          <fieldset class="grp">
+            <legend><span class="chip chip-tower" aria-hidden="true"></span>고층부 <span class="grp-use">업무시설</span></legend>
+            <div class="ctl">
+              <label for="in-towerFloors">층수</label>
+              <input type="range" id="in-towerFloors" data-key="towerFloors" min="0" max="30" step="1" value="12" autocomplete="off">
+              <output id="out-towerFloors" for="in-towerFloors" class="num">—</output>
+            </div>
+            <div class="ctl">
+              <label for="in-towerFH">층고</label>
+              <input type="range" id="in-towerFH" data-key="towerFH" min="3.3" max="4.5" step="0.1" value="3.9" autocomplete="off">
+              <output id="out-towerFH" for="in-towerFH" class="num">—</output>
+            </div>
+          </fieldset>
+          <div class="row-end">
+            <button type="button" id="btn-mass-reset" class="btn">기본값으로 되돌리기</button>
+          </div>
+        </div>
+      </details>
+
+      <details id="sec-sun" class="sec" open>
+        <summary class="sec-h"><h2 class="sec-ko">일영</h2><span class="sec-en">Sun &amp; shadow</span><span class="sec-tog" aria-hidden="true"></span></summary>
+        <div class="sec-body">
+          <div class="seg" role="radiogroup" aria-label="기준일">
+            <input type="radio" name="sun-preset" id="sun-winter" value="winter" checked autocomplete="off"><label for="sun-winter">동지<small id="sun-winter-date">12.22</small></label>
+            <input type="radio" name="sun-preset" id="sun-equinox" value="equinox" autocomplete="off"><label for="sun-equinox">춘·추분<small id="sun-equinox-date">3.20</small></label>
+            <input type="radio" name="sun-preset" id="sun-summer" value="summer" autocomplete="off"><label for="sun-summer">하지<small id="sun-summer-date">6.21</small></label>
+          </div>
+          <div class="time-row">
+            <div class="time-read">
+              <span id="out-date" class="label">12월 22일</span>
+              <output id="out-hour" for="in-hour" class="time num">12:30</output>
+            </div>
+            <span id="sun-state" class="state-chip" hidden>해가 진 시간</span>
+            <button type="button" id="btn-play" class="btn btn-play" aria-pressed="false"><span class="ico-play" aria-hidden="true"></span><span id="btn-play-text">재생</span></button>
+          </div>
+          <div class="time-scale">
+            <label for="in-hour" class="sr-only">시각 (06:00–19:00)</label>
+            <input type="range" id="in-hour" min="360" max="1140" step="10" value="750" autocomplete="off">
+            <div class="ticks" aria-hidden="true">
+              <span style="--p:0">06</span><span style="--p:0.2308">09</span><span style="--p:0.4615">12</span><span style="--p:0.6923">15</span><span style="--p:0.9231">18</span>
+            </div>
+          </div>
+          <dl id="sun-read" class="sun-read">
+            <div><dt class="label">태양고도</dt><dd id="out-alt" class="num">—</dd></div>
+            <div><dt class="label">방위각</dt><dd><span id="out-az" class="num">—</span> <span id="out-az-dir" class="dir">—</span></dd></div>
+            <div><dt class="label">그림자 길이</dt><dd id="out-shadow" class="num">—</dd></div>
+          </dl>
+          <p class="foot">그림자 길이는 평지에서 최고높이 기준. 방위각은 북=0°, 시계방향.</p>
+        </div>
+      </details>
+
+      <details id="sec-view" class="sec" open>
+        <summary class="sec-h"><h2 class="sec-ko">보기</h2><span class="sec-en">View</span><span class="sec-tog" aria-hidden="true"></span></summary>
+        <div class="sec-body">
+          <div class="seg" role="group" aria-label="카메라 시점">
+            <button type="button" id="view-aerial" data-view="aerial" aria-pressed="true">조감</button>
+            <button type="button" id="view-pedestrian" data-view="pedestrian" aria-pressed="false">보행자</button>
+            <button type="button" id="view-top" data-view="top" aria-pressed="false">평면</button>
+            <button type="button" id="view-north" data-view="north" aria-pressed="false">북측</button>
+          </div>
+          <div class="toggles" role="group" aria-label="표시 레이어">
+            <label class="tg" for="layer-context"><input type="checkbox" id="layer-context" data-layer="context" checked autocomplete="off"><span>주변 건물</span></label>
+            <label class="tg" for="layer-trees"><input type="checkbox" id="layer-trees" data-layer="trees" checked autocomplete="off"><span>가로수</span></label>
+            <label class="tg" for="layer-shadows"><input type="checkbox" id="layer-shadows" data-layer="shadows" checked autocomplete="off"><span>그림자</span></label>
+            <label class="tg" for="layer-terrain"><input type="checkbox" id="layer-terrain" data-layer="terrain" checked autocomplete="off"><span>원경 지형</span></label>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <footer class="status" aria-label="렌더링 상태">
+      <span id="st-engine">—</span>
+      <span>fps <b id="st-fps" class="num">—</b></span>
+      <span>드로우콜 <b id="st-draws" class="num">—</b></span>
+      <span>로드 <b id="st-load" class="num">—</b> ms</span>
+    </footer>
+  </aside>
+
+  <div id="splash" class="splash" role="status" aria-live="polite">
+    <div class="splash-card">
+      <p class="label">가상대지 매스 스터디</p>
+      <p id="splash-msg" class="splash-msg">장면 생성 중…</p>
+      <div class="splash-bar" aria-hidden="true"></div>
+    </div>
+  </div>
+
+  <div id="error" class="splash is-error" role="alert" hidden>
+    <div class="splash-card">
+      <p class="label">가상대지 매스 스터디</p>
+      <p class="splash-msg">3D 엔진을 불러오지 못했습니다</p>
+      <p id="error-reason" class="splash-reason">—</p>
+      <p class="splash-help">페이지를 새로 고쳐 보세요. 계속되면 WebGL2를 지원하는 최신 Chrome, Edge, Safari, Firefox에서 열어 주세요.</p>
+    </div>
+  </div>
+</div>
+<script>
+// Early guard: if a later script fails to load or parse before the app is ready (startApp never runs),
+// show the error panel instead of an endless loading state. startApp() clears it once the scene is ready.
+(function () {
+  window.addEventListener('error', function (e) {
+    if (window.__app && window.__app.ready) return;
+    var box = document.getElementById('error'), splash = document.getElementById('splash'), why = document.getElementById('error-reason');
+    if (!box || !box.hidden) return;
+    var t = e.target;
+    var msg = t && t.tagName === 'SCRIPT' && t.src ? '스크립트를 불러오지 못했습니다: ' + t.src : (e.message || '스크립트 오류');
+    if (why) why.textContent = msg;
+    box.hidden = false;
+    if (splash) splash.hidden = true;
+  }, true);
+})();
+</script>
+
+<script>
+// ---- shared/scene-data.js ----
+// GENERATED by tools/gen-scene-data.mjs (seed 20261005). Do not edit by hand.
+// World coords: e = east (m), n = north (m), origin = study site centre.
+const SITE_DATA = {"seed":20261005,"city":{"eMin":-275,"eMax":315,"nMin":-235,"nMax":247},"site":{"polygon":[[-21,-15],[18,-15],[21,-12],[21,15],[-21,15]],"label":"계획 대지 (가상)","location":{"lat":37.5665,"lon":126.978,"tz":9}},"roads":[{"kind":"ew","e0":-275,"e1":315,"n0":-235,"n1":-227,"sidewalk":2,"width":8},{"kind":"ew","e0":-275,"e1":315,"n0":-138,"n1":-128,"sidewalk":2.5,"width":10},{"kind":"ew","e0":-275,"e1":315,"n0":-27,"n1":-15,"sidewalk":3,"width":12},{"kind":"ew","e0":-275,"e1":315,"n0":47,"n1":55,"sidewalk":2,"width":8},{"kind":"ew","e0":-275,"e1":315,"n0":136,"n1":146,"sidewalk":2.5,"width":10},{"kind":"ew","e0":-275,"e1":315,"n0":239,"n1":247,"sidewalk":2,"width":8},{"kind":"ns","e0":-275,"e1":-267,"n0":-235,"n1":247,"sidewalk":2,"width":8},{"kind":"ns","e0":-176,"e1":-166,"n0":-235,"n1":247,"sidewalk":2.5,"width":10},{"kind":"ns","e0":-76,"e1":-66,"n0":-235,"n1":247,"sidewalk":2.5,"width":10},{"kind":"ns","e0":21,"e1":29,"n0":-235,"n1":247,"sidewalk":2,"width":8},{"kind":"ns","e0":113,"e1":125,"n0":-235,"n1":247,"sidewalk":3,"width":12},{"kind":"ns","e0":217,"e1":225,"n0":-235,"n1":247,"sidewalk":2,"width":8},{"kind":"ns","e0":307,"e1":315,"n0":-235,"n1":247,"sidewalk":2,"width":8}],"blocks":[{"id":"B00","e0":-267,"e1":-176,"n0":-227,"n1":-138,"pad":{"w":2,"e":2.5,"s":2,"n":2.5}},{"id":"B01","e0":-267,"e1":-176,"n0":-128,"n1":-27,"pad":{"w":2,"e":2.5,"s":2.5,"n":3}},{"id":"B02","e0":-267,"e1":-176,"n0":-15,"n1":47,"pad":{"w":2,"e":2.5,"s":3,"n":2}},{"id":"B03","e0":-267,"e1":-176,"n0":55,"n1":136,"pad":{"w":2,"e":2.5,"s":2,"n":2.5}},{"id":"B04","e0":-267,"e1":-176,"n0":146,"n1":239,"pad":{"w":2,"e":2.5,"s":2.5,"n":2}},{"id":"B10","e0":-166,"e1":-76,"n0":-227,"n1":-138,"pad":{"w":2.5,"e":2.5,"s":2,"n":2.5}},{"id":"B11","e0":-166,"e1":-76,"n0":-128,"n1":-27,"pad":{"w":2.5,"e":2.5,"s":2.5,"n":3}},{"id":"B12","e0":-166,"e1":-76,"n0":-15,"n1":47,"pad":{"w":2.5,"e":2.5,"s":3,"n":2}},{"id":"B13","e0":-166,"e1":-76,"n0":55,"n1":136,"pad":{"w":2.5,"e":2.5,"s":2,"n":2.5},"kind":"park"},{"id":"B14","e0":-166,"e1":-76,"n0":146,"n1":239,"pad":{"w":2.5,"e":2.5,"s":2.5,"n":2}},{"id":"B20","e0":-66,"e1":21,"n0":-227,"n1":-138,"pad":{"w":2.5,"e":2,"s":2,"n":2.5}},{"id":"B21","e0":-66,"e1":21,"n0":-128,"n1":-27,"pad":{"w":2.5,"e":2,"s":2.5,"n":3}},{"id":"B22","e0":-66,"e1":21,"n0":-15,"n1":47,"pad":{"w":2.5,"e":2,"s":3,"n":2},"kind":"study"},{"id":"B23","e0":-66,"e1":21,"n0":55,"n1":136,"pad":{"w":2.5,"e":2,"s":2,"n":2.5}},{"id":"B24","e0":-66,"e1":21,"n0":146,"n1":239,"pad":{"w":2.5,"e":2,"s":2.5,"n":2}},{"id":"B30","e0":29,"e1":113,"n0":-227,"n1":-138,"pad":{"w":2,"e":3,"s":2,"n":2.5}},{"id":"B31","e0":29,"e1":113,"n0":-128,"n1":-27,"pad":{"w":2,"e":3,"s":2.5,"n":3}},{"id":"B32","e0":29,"e1":113,"n0":-15,"n1":47,"pad":{"w":2,"e":3,"s":3,"n":2}},{"id":"B33","e0":29,"e1":113,"n0":55,"n1":136,"pad":{"w":2,"e":3,"s":2,"n":2.5}},{"id":"B34","e0":29,"e1":113,"n0":146,"n1":239,"pad":{"w":2,"e":3,"s":2.5,"n":2}},{"id":"B40","e0":125,"e1":217,"n0":-227,"n1":-138,"pad":{"w":3,"e":2,"s":2,"n":2.5}},{"id":"B41","e0":125,"e1":217,"n0":-128,"n1":-27,"pad":{"w":3,"e":2,"s":2.5,"n":3}},{"id":"B42","e0":125,"e1":217,"n0":-15,"n1":47,"pad":{"w":3,"e":2,"s":3,"n":2}},{"id":"B43","e0":125,"e1":217,"n0":55,"n1":136,"pad":{"w":3,"e":2,"s":2,"n":2.5}},{"id":"B44","e0":125,"e1":217,"n0":146,"n1":239,"pad":{"w":3,"e":2,"s":2.5,"n":2}},{"id":"B50","e0":225,"e1":307,"n0":-227,"n1":-138,"pad":{"w":2,"e":2,"s":2,"n":2.5}},{"id":"B51","e0":225,"e1":307,"n0":-128,"n1":-27,"pad":{"w":2,"e":2,"s":2.5,"n":3}},{"id":"B52","e0":225,"e1":307,"n0":-15,"n1":47,"pad":{"w":2,"e":2,"s":3,"n":2}},{"id":"B53","e0":225,"e1":307,"n0":55,"n1":136,"pad":{"w":2,"e":2,"s":2,"n":2.5}},{"id":"B54","e0":225,"e1":307,"n0":146,"n1":239,"pad":{"w":2,"e":2,"s":2.5,"n":2}}],"parcels":[{"block":"B00","e0":-267,"e1":-241.9,"n0":-227,"n1":-182.5},{"block":"B00","e0":-241.9,"e1":-221.7,"n0":-227,"n1":-182.5},{"block":"B00","e0":-221.7,"e1":-203.3,"n0":-227,"n1":-182.5},{"block":"B00","e0":-203.3,"e1":-176,"n0":-227,"n1":-182.5},{"block":"B00","e0":-267,"e1":-238.9,"n0":-182.5,"n1":-138},{"block":"B00","e0":-238.9,"e1":-218,"n0":-182.5,"n1":-138},{"block":"B00","e0":-218,"e1":-198.5,"n0":-182.5,"n1":-138},{"block":"B00","e0":-198.5,"e1":-176,"n0":-182.5,"n1":-138},{"block":"B01","e0":-267,"e1":-250.8,"n0":-128,"n1":-77.5},{"block":"B01","e0":-250.8,"e1":-221,"n0":-128,"n1":-77.5},{"block":"B01","e0":-221,"e1":-198.7,"n0":-128,"n1":-77.5},{"block":"B01","e0":-198.7,"e1":-176,"n0":-128,"n1":-77.5},{"block":"B01","e0":-267,"e1":-240.7,"n0":-77.5,"n1":-27},{"block":"B01","e0":-240.7,"e1":-222.8,"n0":-77.5,"n1":-27},{"block":"B01","e0":-222.8,"e1":-203.3,"n0":-77.5,"n1":-27},{"block":"B01","e0":-203.3,"e1":-176,"n0":-77.5,"n1":-27},{"block":"B02","e0":-267,"e1":-248,"n0":-15,"n1":47},{"block":"B02","e0":-248,"e1":-228.6,"n0":-15,"n1":47},{"block":"B02","e0":-228.6,"e1":-208.4,"n0":-15,"n1":47},{"block":"B02","e0":-208.4,"e1":-176,"n0":-15,"n1":47},{"block":"B03","e0":-267,"e1":-242.6,"n0":55,"n1":95.5},{"block":"B03","e0":-242.6,"e1":-223.4,"n0":55,"n1":95.5},{"block":"B03","e0":-223.4,"e1":-202.4,"n0":55,"n1":95.5},{"block":"B03","e0":-202.4,"e1":-176,"n0":55,"n1":95.5},{"block":"B03","e0":-267,"e1":-239.5,"n0":95.5,"n1":136},{"block":"B03","e0":-239.5,"e1":-217.2,"n0":95.5,"n1":136},{"block":"B03","e0":-217.2,"e1":-197.6,"n0":95.5,"n1":136},{"block":"B03","e0":-197.6,"e1":-176,"n0":95.5,"n1":136},{"block":"B04","e0":-267,"e1":-250.6,"n0":146,"n1":192.5},{"block":"B04","e0":-250.6,"e1":-225.7,"n0":146,"n1":192.5},{"block":"B04","e0":-225.7,"e1":-200.6,"n0":146,"n1":192.5},{"block":"B04","e0":-200.6,"e1":-176,"n0":146,"n1":192.5},{"block":"B04","e0":-267,"e1":-250.4,"n0":192.5,"n1":239},{"block":"B04","e0":-250.4,"e1":-219.4,"n0":192.5,"n1":239},{"block":"B04","e0":-219.4,"e1":-190.5,"n0":192.5,"n1":239},{"block":"B04","e0":-190.5,"e1":-176,"n0":192.5,"n1":239},{"block":"B10","e0":-166,"e1":-137.1,"n0":-227,"n1":-182.5},{"block":"B10","e0":-137.1,"e1":-120.7,"n0":-227,"n1":-182.5},{"block":"B10","e0":-120.7,"e1":-102.5,"n0":-227,"n1":-182.5},{"block":"B10","e0":-102.5,"e1":-76,"n0":-227,"n1":-182.5},{"block":"B10","e0":-166,"e1":-135.9,"n0":-182.5,"n1":-138},{"block":"B10","e0":-135.9,"e1":-108.3,"n0":-182.5,"n1":-138},{"block":"B10","e0":-108.3,"e1":-76,"n0":-182.5,"n1":-138},{"block":"B11","e0":-166,"e1":-144.9,"n0":-128,"n1":-77.5},{"block":"B11","e0":-144.9,"e1":-116.8,"n0":-128,"n1":-77.5},{"block":"B11","e0":-116.8,"e1":-93.1,"n0":-128,"n1":-77.5},{"block":"B11","e0":-93.1,"e1":-76,"n0":-128,"n1":-77.5},{"block":"B11","e0":-166,"e1":-144.8,"n0":-77.5,"n1":-27},{"block":"B11","e0":-144.8,"e1":-119.8,"n0":-77.5,"n1":-27},{"block":"B11","e0":-119.8,"e1":-93.8,"n0":-77.5,"n1":-27},{"block":"B11","e0":-93.8,"e1":-76,"n0":-77.5,"n1":-27},{"block":"B12","e0":-166,"e1":-145.9,"n0":-15,"n1":47},{"block":"B12","e0":-145.9,"e1":-123.3,"n0":-15,"n1":47},{"block":"B12","e0":-123.3,"e1":-104,"n0":-15,"n1":47},{"block":"B12","e0":-104,"e1":-76,"n0":-15,"n1":47},{"block":"B14","e0":-166,"e1":-134.3,"n0":146,"n1":192.5},{"block":"B14","e0":-134.3,"e1":-111.6,"n0":146,"n1":192.5},{"block":"B14","e0":-111.6,"e1":-76,"n0":146,"n1":192.5},{"block":"B14","e0":-166,"e1":-141.1,"n0":192.5,"n1":239},{"block":"B14","e0":-141.1,"e1":-113.3,"n0":192.5,"n1":239},{"block":"B14","e0":-113.3,"e1":-76,"n0":192.5,"n1":239},{"block":"B20","e0":-66,"e1":-47.2,"n0":-227,"n1":-182.5},{"block":"B20","e0":-47.2,"e1":-24.5,"n0":-227,"n1":-182.5},{"block":"B20","e0":-24.5,"e1":-7.5,"n0":-227,"n1":-182.5},{"block":"B20","e0":-7.5,"e1":21,"n0":-227,"n1":-182.5},{"block":"B20","e0":-66,"e1":-34.7,"n0":-182.5,"n1":-138},{"block":"B20","e0":-34.7,"e1":-9,"n0":-182.5,"n1":-138},{"block":"B20","e0":-9,"e1":7.8,"n0":-182.5,"n1":-138},{"block":"B20","e0":7.8,"e1":21,"n0":-182.5,"n1":-138},{"block":"B21","e0":-66,"e1":-39.1,"n0":-128,"n1":-77.5},{"block":"B21","e0":-39.1,"e1":-12.7,"n0":-128,"n1":-77.5},{"block":"B21","e0":-12.7,"e1":4.9,"n0":-128,"n1":-77.5},{"block":"B21","e0":4.9,"e1":21,"n0":-128,"n1":-77.5},{"block":"B21","e0":-66,"e1":-49,"n0":-77.5,"n1":-27},{"block":"B21","e0":-49,"e1":-23.3,"n0":-77.5,"n1":-27},{"block":"B21","e0":-23.3,"e1":-6.2,"n0":-77.5,"n1":-27},{"block":"B21","e0":-6.2,"e1":21,"n0":-77.5,"n1":-27},{"block":"B22","e0":-66,"e1":-44,"n0":-15,"n1":16},{"block":"B22","e0":-44,"e1":-21,"n0":-15,"n1":16},{"block":"B22","e0":-66,"e1":-40,"n0":16,"n1":47},{"block":"B22","e0":-40,"e1":-21,"n0":16,"n1":47},{"block":"B22","e0":-21,"e1":0,"n0":15,"n1":47},{"block":"B22","e0":0,"e1":21,"n0":15,"n1":47},{"block":"B23","e0":-66,"e1":-34.7,"n0":55,"n1":95.5},{"block":"B23","e0":-34.7,"e1":-14.5,"n0":55,"n1":95.5},{"block":"B23","e0":-14.5,"e1":3.7,"n0":55,"n1":95.5},{"block":"B23","e0":3.7,"e1":21,"n0":55,"n1":95.5},{"block":"B23","e0":-66,"e1":-43.4,"n0":95.5,"n1":136},{"block":"B23","e0":-43.4,"e1":-23.9,"n0":95.5,"n1":136},{"block":"B23","e0":-23.9,"e1":7.9,"n0":95.5,"n1":136},{"block":"B23","e0":7.9,"e1":21,"n0":95.5,"n1":136},{"block":"B24","e0":-66,"e1":-49.7,"n0":146,"n1":192.5},{"block":"B24","e0":-49.7,"e1":-23.6,"n0":146,"n1":192.5},{"block":"B24","e0":-23.6,"e1":8.3,"n0":146,"n1":192.5},{"block":"B24","e0":8.3,"e1":21,"n0":146,"n1":192.5},{"block":"B24","e0":-66,"e1":-43.2,"n0":192.5,"n1":239},{"block":"B24","e0":-43.2,"e1":-16.4,"n0":192.5,"n1":239},{"block":"B24","e0":-16.4,"e1":5.8,"n0":192.5,"n1":239},{"block":"B24","e0":5.8,"e1":21,"n0":192.5,"n1":239},{"block":"B30","e0":29,"e1":58.4,"n0":-227,"n1":-182.5},{"block":"B30","e0":58.4,"e1":76,"n0":-227,"n1":-182.5},{"block":"B30","e0":76,"e1":113,"n0":-227,"n1":-182.5},{"block":"B30","e0":29,"e1":53.9,"n0":-182.5,"n1":-138},{"block":"B30","e0":53.9,"e1":80.2,"n0":-182.5,"n1":-138},{"block":"B30","e0":80.2,"e1":100.4,"n0":-182.5,"n1":-138},{"block":"B30","e0":100.4,"e1":113,"n0":-182.5,"n1":-138},{"block":"B31","e0":29,"e1":52.5,"n0":-128,"n1":-77.5},{"block":"B31","e0":52.5,"e1":75.3,"n0":-128,"n1":-77.5},{"block":"B31","e0":75.3,"e1":97.5,"n0":-128,"n1":-77.5},{"block":"B31","e0":97.5,"e1":113,"n0":-128,"n1":-77.5},{"block":"B31","e0":29,"e1":48.9,"n0":-77.5,"n1":-27},{"block":"B31","e0":48.9,"e1":66.4,"n0":-77.5,"n1":-27},{"block":"B31","e0":66.4,"e1":97.1,"n0":-77.5,"n1":-27},{"block":"B31","e0":97.1,"e1":113,"n0":-77.5,"n1":-27},{"block":"B32","e0":29,"e1":55.6,"n0":-15,"n1":47},{"block":"B32","e0":55.6,"e1":74.2,"n0":-15,"n1":47},{"block":"B32","e0":74.2,"e1":95.1,"n0":-15,"n1":47},{"block":"B32","e0":95.1,"e1":113,"n0":-15,"n1":47},{"block":"B33","e0":29,"e1":60.9,"n0":55,"n1":95.5},{"block":"B33","e0":60.9,"e1":80.5,"n0":55,"n1":95.5},{"block":"B33","e0":80.5,"e1":96.7,"n0":55,"n1":95.5},{"block":"B33","e0":96.7,"e1":113,"n0":55,"n1":95.5},{"block":"B33","e0":29,"e1":57,"n0":95.5,"n1":136},{"block":"B33","e0":57,"e1":82.2,"n0":95.5,"n1":136},{"block":"B33","e0":82.2,"e1":113,"n0":95.5,"n1":136},{"block":"B34","e0":29,"e1":46,"n0":146,"n1":192.5},{"block":"B34","e0":46,"e1":71.8,"n0":146,"n1":192.5},{"block":"B34","e0":71.8,"e1":89.8,"n0":146,"n1":192.5},{"block":"B34","e0":89.8,"e1":113,"n0":146,"n1":192.5},{"block":"B34","e0":29,"e1":50,"n0":192.5,"n1":239},{"block":"B34","e0":50,"e1":70.3,"n0":192.5,"n1":239},{"block":"B34","e0":70.3,"e1":90.6,"n0":192.5,"n1":239},{"block":"B34","e0":90.6,"e1":113,"n0":192.5,"n1":239},{"block":"B40","e0":125,"e1":147.2,"n0":-227,"n1":-182.5},{"block":"B40","e0":147.2,"e1":169.3,"n0":-227,"n1":-182.5},{"block":"B40","e0":169.3,"e1":190.8,"n0":-227,"n1":-182.5},{"block":"B40","e0":190.8,"e1":217,"n0":-227,"n1":-182.5},{"block":"B40","e0":125,"e1":153.8,"n0":-182.5,"n1":-138},{"block":"B40","e0":153.8,"e1":170.7,"n0":-182.5,"n1":-138},{"block":"B40","e0":170.7,"e1":195.1,"n0":-182.5,"n1":-138},{"block":"B40","e0":195.1,"e1":217,"n0":-182.5,"n1":-138},{"block":"B41","e0":125,"e1":154.7,"n0":-128,"n1":-77.5},{"block":"B41","e0":154.7,"e1":173,"n0":-128,"n1":-77.5},{"block":"B41","e0":173,"e1":201,"n0":-128,"n1":-77.5},{"block":"B41","e0":201,"e1":217,"n0":-128,"n1":-77.5},{"block":"B41","e0":125,"e1":146.3,"n0":-77.5,"n1":-27},{"block":"B41","e0":146.3,"e1":173.5,"n0":-77.5,"n1":-27},{"block":"B41","e0":173.5,"e1":199.6,"n0":-77.5,"n1":-27},{"block":"B41","e0":199.6,"e1":217,"n0":-77.5,"n1":-27},{"block":"B42","e0":125,"e1":144.4,"n0":-15,"n1":47},{"block":"B42","e0":144.4,"e1":168.9,"n0":-15,"n1":47},{"block":"B42","e0":168.9,"e1":199.5,"n0":-15,"n1":47},{"block":"B42","e0":199.5,"e1":217,"n0":-15,"n1":47},{"block":"B43","e0":125,"e1":150.5,"n0":55,"n1":95.5},{"block":"B43","e0":150.5,"e1":178.3,"n0":55,"n1":95.5},{"block":"B43","e0":178.3,"e1":198.6,"n0":55,"n1":95.5},{"block":"B43","e0":198.6,"e1":217,"n0":55,"n1":95.5},{"block":"B43","e0":125,"e1":151.9,"n0":95.5,"n1":136},{"block":"B43","e0":151.9,"e1":176.9,"n0":95.5,"n1":136},{"block":"B43","e0":176.9,"e1":197.9,"n0":95.5,"n1":136},{"block":"B43","e0":197.9,"e1":217,"n0":95.5,"n1":136},{"block":"B44","e0":125,"e1":142.5,"n0":146,"n1":192.5},{"block":"B44","e0":142.5,"e1":162.8,"n0":146,"n1":192.5},{"block":"B44","e0":162.8,"e1":192.2,"n0":146,"n1":192.5},{"block":"B44","e0":192.2,"e1":217,"n0":146,"n1":192.5},{"block":"B44","e0":125,"e1":155,"n0":192.5,"n1":239},{"block":"B44","e0":155,"e1":183.3,"n0":192.5,"n1":239},{"block":"B44","e0":183.3,"e1":217,"n0":192.5,"n1":239},{"block":"B50","e0":225,"e1":244,"n0":-227,"n1":-182.5},{"block":"B50","e0":244,"e1":263.4,"n0":-227,"n1":-182.5},{"block":"B50","e0":263.4,"e1":288.3,"n0":-227,"n1":-182.5},{"block":"B50","e0":288.3,"e1":307,"n0":-227,"n1":-182.5},{"block":"B50","e0":225,"e1":246.2,"n0":-182.5,"n1":-138},{"block":"B50","e0":246.2,"e1":268.1,"n0":-182.5,"n1":-138},{"block":"B50","e0":268.1,"e1":307,"n0":-182.5,"n1":-138},{"block":"B51","e0":225,"e1":256.8,"n0":-128,"n1":-77.5},{"block":"B51","e0":256.8,"e1":285.7,"n0":-128,"n1":-77.5},{"block":"B51","e0":285.7,"e1":307,"n0":-128,"n1":-77.5},{"block":"B51","e0":225,"e1":250.3,"n0":-77.5,"n1":-27},{"block":"B51","e0":250.3,"e1":275.7,"n0":-77.5,"n1":-27},{"block":"B51","e0":275.7,"e1":307,"n0":-77.5,"n1":-27},{"block":"B52","e0":225,"e1":245,"n0":-15,"n1":47},{"block":"B52","e0":245,"e1":269.8,"n0":-15,"n1":47},{"block":"B52","e0":269.8,"e1":289.2,"n0":-15,"n1":47},{"block":"B52","e0":289.2,"e1":307,"n0":-15,"n1":47},{"block":"B53","e0":225,"e1":245.9,"n0":55,"n1":95.5},{"block":"B53","e0":245.9,"e1":267.4,"n0":55,"n1":95.5},{"block":"B53","e0":267.4,"e1":289.5,"n0":55,"n1":95.5},{"block":"B53","e0":289.5,"e1":307,"n0":55,"n1":95.5},{"block":"B53","e0":225,"e1":254.6,"n0":95.5,"n1":136},{"block":"B53","e0":254.6,"e1":284.3,"n0":95.5,"n1":136},{"block":"B53","e0":284.3,"e1":307,"n0":95.5,"n1":136},{"block":"B54","e0":225,"e1":248.5,"n0":146,"n1":192.5},{"block":"B54","e0":248.5,"e1":277.4,"n0":146,"n1":192.5},{"block":"B54","e0":277.4,"e1":307,"n0":146,"n1":192.5},{"block":"B54","e0":225,"e1":253.5,"n0":192.5,"n1":239},{"block":"B54","e0":253.5,"e1":276.4,"n0":192.5,"n1":239},{"block":"B54","e0":276.4,"e1":307,"n0":192.5,"n1":239}],"buildings":[{"parcel":0,"floors":14,"parts":[{"e0":-265,"e1":-245.2,"n0":-223.7,"n1":-185.3,"y0":0,"y1":12},{"e0":-260,"e1":-250.2,"n0":-218.7,"n1":-190.3,"y0":12,"y1":48.3}]},{"parcel":1,"floors":10,"parts":[{"e0":-239.8,"e1":-224.6,"n0":-223.8,"n1":-186.5,"y0":0,"y1":33}]},{"parcel":3,"floors":5,"parts":[{"e0":-201.4,"e1":-178.7,"n0":-225.4,"n1":-184.8,"y0":0,"y1":16.5}]},{"parcel":4,"floors":8,"parts":[{"e0":-263.4,"e1":-240.9,"n0":-179,"n1":-141.7,"y0":0,"y1":26.4}]},{"parcel":5,"floors":2,"parts":[{"e0":-237,"e1":-220.3,"n0":-179.5,"n1":-141.9,"y0":0,"y1":6.6}]},{"parcel":6,"floors":10,"parts":[{"e0":-215.2,"e1":-200.3,"n0":-180.8,"n1":-140.7,"y0":0,"y1":33}]},{"parcel":7,"floors":2,"parts":[{"e0":-196.6,"e1":-178.6,"n0":-178.9,"n1":-141.1,"y0":0,"y1":6.6}]},{"parcel":8,"floors":6,"parts":[{"e0":-263.1,"e1":-253.9,"n0":-125.4,"n1":-79.5,"y0":0,"y1":19.8}]},{"parcel":9,"floors":3,"parts":[{"e0":-248.9,"e1":-224.5,"n0":-124.6,"n1":-81.5,"y0":0,"y1":9.9}]},{"parcel":10,"floors":2,"parts":[{"e0":-218.9,"e1":-201.5,"n0":-124.3,"n1":-79.7,"y0":0,"y1":6.6}]},{"parcel":11,"floors":2,"parts":[{"e0":-195.6,"e1":-178,"n0":-124.2,"n1":-81.4,"y0":0,"y1":6.6}]},{"parcel":12,"floors":12,"parts":[{"e0":-263.8,"e1":-243.4,"n0":-74.8,"n1":-31,"y0":0,"y1":12},{"e0":-258.8,"e1":-248.4,"n0":-69.8,"n1":-36,"y0":12,"y1":41.7}]},{"parcel":13,"floors":13,"parts":[{"e0":-238,"e1":-226.3,"n0":-75.8,"n1":-29.1,"y0":0,"y1":42.9}]},{"parcel":14,"floors":4,"parts":[{"e0":-220.5,"e1":-206.7,"n0":-74,"n1":-30.6,"y0":0,"y1":13.2}]},{"parcel":15,"floors":15,"parts":[{"e0":-200.6,"e1":-179,"n0":-75.1,"n1":-29.5,"y0":0,"y1":12},{"e0":-195.6,"e1":-184,"n0":-70.1,"n1":-34.5,"y0":12,"y1":51.6}]},{"parcel":17,"floors":7,"parts":[{"e0":-245.9,"e1":-231.7,"n0":-13.1,"n1":44.7,"y0":0,"y1":23.1}]},{"parcel":18,"floors":5,"parts":[{"e0":-227,"e1":-210.3,"n0":-11.7,"n1":43.2,"y0":0,"y1":16.5}]},{"parcel":19,"floors":17,"parts":[{"e0":-204.8,"e1":-179.4,"n0":-13,"n1":44.8,"y0":0,"y1":12},{"e0":-199.8,"e1":-184.4,"n0":-8,"n1":39.8,"y0":12,"y1":58.2}]},{"parcel":20,"floors":2,"parts":[{"e0":-264.1,"e1":-245.9,"n0":58.4,"n1":92,"y0":0,"y1":6.6}]},{"parcel":21,"floors":4,"parts":[{"e0":-239.7,"e1":-225.3,"n0":58.3,"n1":92.5,"y0":0,"y1":13.2}]},{"parcel":22,"floors":2,"parts":[{"e0":-221,"e1":-206.2,"n0":57.8,"n1":93.3,"y0":0,"y1":6.6}]},{"parcel":23,"floors":9,"parts":[{"e0":-198.7,"e1":-179.5,"n0":58.6,"n1":92.9,"y0":0,"y1":29.7}]},{"parcel":24,"floors":4,"parts":[{"e0":-264,"e1":-243.3,"n0":98,"n1":133.3,"y0":0,"y1":13.2}]},{"parcel":25,"floors":3,"parts":[{"e0":-236.9,"e1":-219.8,"n0":97.8,"n1":133.9,"y0":0,"y1":9.9}]},{"parcel":26,"floors":7,"parts":[{"e0":-215.7,"e1":-199.6,"n0":98.1,"n1":132.7,"y0":0,"y1":23.1}]},{"parcel":27,"floors":9,"parts":[{"e0":-194.1,"e1":-179.4,"n0":98.3,"n1":132.3,"y0":0,"y1":29.7}]},{"parcel":28,"floors":3,"parts":[{"e0":-263.3,"e1":-252.3,"n0":147.9,"n1":190.2,"y0":0,"y1":9.9}]},{"parcel":29,"floors":2,"parts":[{"e0":-248.4,"e1":-228.7,"n0":148.1,"n1":190.8,"y0":0,"y1":6.6}]},{"parcel":30,"floors":10,"parts":[{"e0":-223.5,"e1":-203.7,"n0":150,"n1":189,"y0":0,"y1":12},{"e0":-218.5,"e1":-208.7,"n0":155,"n1":184,"y0":12,"y1":35.1}]},{"parcel":31,"floors":13,"parts":[{"e0":-199.1,"e1":-178.8,"n0":148.8,"n1":188.7,"y0":0,"y1":12},{"e0":-194.1,"e1":-183.8,"n0":153.8,"n1":183.7,"y0":12,"y1":45}]},{"parcel":32,"floors":2,"parts":[{"e0":-263.6,"e1":-254.1,"n0":196.3,"n1":235.3,"y0":0,"y1":6.6}]},{"parcel":33,"floors":6,"parts":[{"e0":-246.8,"e1":-221.7,"n0":195.4,"n1":236.8,"y0":0,"y1":19.8}]},{"parcel":34,"floors":10,"parts":[{"e0":-217.8,"e1":-194.3,"n0":196.2,"n1":235.5,"y0":0,"y1":12},{"e0":-212.8,"e1":-199.3,"n0":201.2,"n1":230.5,"y0":12,"y1":35.1}]},{"parcel":35,"floors":2,"parts":[{"e0":-188.8,"e1":-178.4,"n0":194.5,"n1":236.5,"y0":0,"y1":6.6}]},{"parcel":37,"floors":4,"parts":[{"e0":-133.4,"e1":-123.4,"n0":-223.8,"n1":-186.5,"y0":0,"y1":13.2}]},{"parcel":38,"floors":4,"parts":[{"e0":-118.5,"e1":-106.4,"n0":-224.1,"n1":-185.6,"y0":0,"y1":13.2}]},{"parcel":39,"floors":11,"parts":[{"e0":-100.8,"e1":-78.8,"n0":-223.7,"n1":-185.8,"y0":0,"y1":12},{"e0":-95.8,"e1":-83.8,"n0":-218.7,"n1":-190.8,"y0":12,"y1":38.4}]},{"parcel":40,"floors":2,"parts":[{"e0":-162.1,"e1":-138.5,"n0":-179.9,"n1":-140.7,"y0":0,"y1":6.6}]},{"parcel":41,"floors":8,"parts":[{"e0":-133.1,"e1":-109.9,"n0":-179.6,"n1":-140.2,"y0":0,"y1":26.4}]},{"parcel":42,"floors":2,"parts":[{"e0":-106,"e1":-77.6,"n0":-178.7,"n1":-141.9,"y0":0,"y1":6.6}]},{"parcel":43,"floors":2,"parts":[{"e0":-162.4,"e1":-146.7,"n0":-125.2,"n1":-80.1,"y0":0,"y1":6.6}]},{"parcel":44,"floors":2,"parts":[{"e0":-143.3,"e1":-120.8,"n0":-126.4,"n1":-80.1,"y0":0,"y1":6.6}]},{"parcel":45,"floors":13,"parts":[{"e0":-112.9,"e1":-96.8,"n0":-125.9,"n1":-81.1,"y0":0,"y1":12},{"e0":-107.9,"e1":-101.8,"n0":-120.9,"n1":-86.1,"y0":12,"y1":45}]},{"parcel":46,"floors":7,"parts":[{"e0":-90.4,"e1":-78.4,"n0":-124.5,"n1":-80.6,"y0":0,"y1":23.1}]},{"parcel":47,"floors":9,"parts":[{"e0":-162.1,"e1":-147.5,"n0":-75.2,"n1":-30.1,"y0":0,"y1":29.7}]},{"parcel":48,"floors":14,"parts":[{"e0":-143.3,"e1":-121.6,"n0":-73.6,"n1":-28.8,"y0":0,"y1":12},{"e0":-138.3,"e1":-126.6,"n0":-68.6,"n1":-33.8,"y0":12,"y1":48.3}]},{"parcel":49,"floors":4,"parts":[{"e0":-116.3,"e1":-96.9,"n0":-74.2,"n1":-30.7,"y0":0,"y1":13.2}]},{"parcel":50,"floors":3,"parts":[{"e0":-90.1,"e1":-78.4,"n0":-75.2,"n1":-30.5,"y0":0,"y1":9.9}]},{"parcel":51,"floors":15,"parts":[{"e0":-163.4,"e1":-147.8,"n0":-11.4,"n1":45.2,"y0":0,"y1":12},{"e0":-158.4,"e1":-152.8,"n0":-6.4,"n1":40.2,"y0":12,"y1":51.6}]},{"parcel":52,"floors":2,"parts":[{"e0":-144.3,"e1":-125.3,"n0":-13.3,"n1":44,"y0":0,"y1":6.6}]},{"parcel":53,"floors":8,"parts":[{"e0":-121.8,"e1":-108,"n0":-11.6,"n1":45.4,"y0":0,"y1":26.4}]},{"parcel":54,"floors":12,"parts":[{"e0":-101.2,"e1":-77.9,"n0":-11.1,"n1":43.1,"y0":0,"y1":12},{"e0":-96.2,"e1":-82.9,"n0":-6.1,"n1":38.1,"y0":12,"y1":41.7}]},{"parcel":55,"floors":6,"parts":[{"e0":-162.2,"e1":-138.1,"n0":147.7,"n1":190.6,"y0":0,"y1":19.8}]},{"parcel":56,"floors":5,"parts":[{"e0":-132.5,"e1":-113.8,"n0":149,"n1":190.5,"y0":0,"y1":16.5}]},{"parcel":57,"floors":4,"parts":[{"e0":-109.4,"e1":-78.7,"n0":149.9,"n1":189.2,"y0":0,"y1":13.2}]},{"parcel":58,"floors":6,"parts":[{"e0":-163.4,"e1":-142.8,"n0":195.7,"n1":237.1,"y0":0,"y1":19.8}]},{"parcel":59,"floors":5,"parts":[{"e0":-139,"e1":-116.5,"n0":195.3,"n1":237.3,"y0":0,"y1":16.5}]},{"parcel":60,"floors":2,"parts":[{"e0":-109.7,"e1":-78.6,"n0":196.2,"n1":236.8,"y0":0,"y1":6.6}]},{"parcel":61,"floors":2,"parts":[{"e0":-62.7,"e1":-49.1,"n0":-225,"n1":-184.7,"y0":0,"y1":6.6}]},{"parcel":62,"floors":2,"parts":[{"e0":-43.3,"e1":-27.5,"n0":-224.4,"n1":-184.3,"y0":0,"y1":6.6}]},{"parcel":63,"floors":10,"parts":[{"e0":-21.2,"e1":-9.9,"n0":-224.4,"n1":-184.1,"y0":0,"y1":33}]},{"parcel":64,"floors":6,"parts":[{"e0":-4.7,"e1":18.5,"n0":-224.4,"n1":-185.6,"y0":0,"y1":19.8}]},{"parcel":65,"floors":8,"parts":[{"e0":-64.4,"e1":-37.8,"n0":-179.2,"n1":-140.7,"y0":0,"y1":26.4}]},{"parcel":66,"floors":2,"parts":[{"e0":-32.7,"e1":-11.9,"n0":-180,"n1":-140.7,"y0":0,"y1":6.6}]},{"parcel":67,"floors":7,"parts":[{"e0":-7.5,"e1":5.8,"n0":-179.4,"n1":-140.9,"y0":0,"y1":23.1}]},{"parcel":68,"floors":11,"parts":[{"e0":10.6,"e1":18.9,"n0":-178.6,"n1":-141,"y0":0,"y1":36.3}]},{"parcel":69,"floors":2,"parts":[{"e0":-64,"e1":-42.7,"n0":-126.5,"n1":-80.6,"y0":0,"y1":6.6}]},{"parcel":70,"floors":13,"parts":[{"e0":-36.5,"e1":-14.8,"n0":-124.9,"n1":-80.2,"y0":0,"y1":12},{"e0":-31.5,"e1":-19.8,"n0":-119.9,"n1":-85.2,"y0":12,"y1":45}]},{"parcel":71,"floors":10,"parts":[{"e0":-9.1,"e1":0.9,"n0":-125.5,"n1":-80.6,"y0":0,"y1":33}]},{"parcel":72,"floors":2,"parts":[{"e0":7.1,"e1":17.6,"n0":-125.9,"n1":-80.2,"y0":0,"y1":6.6}]},{"parcel":73,"floors":15,"parts":[{"e0":-62.2,"e1":-50.6,"n0":-74.7,"n1":-29.7,"y0":0,"y1":49.5}]},{"parcel":74,"floors":12,"parts":[{"e0":-45.5,"e1":-26.4,"n0":-74.3,"n1":-30.5,"y0":0,"y1":12},{"e0":-40.5,"e1":-31.4,"n0":-69.3,"n1":-35.5,"y0":12,"y1":41.7}]},{"parcel":75,"floors":21,"parts":[{"e0":-20.7,"e1":-8.7,"n0":-74.6,"n1":-31,"y0":0,"y1":69.3}]},{"parcel":76,"floors":4,"parts":[{"e0":-4.7,"e1":17.5,"n0":-75.7,"n1":-30.7,"y0":0,"y1":13.2}]},{"parcel":77,"floors":20,"parts":[{"e0":-62.8,"e1":-46.9,"n0":-11.5,"n1":12.9,"y0":0,"y1":66}]},{"parcel":78,"floors":3,"parts":[{"e0":-40.6,"e1":-22.8,"n0":-11.3,"n1":14.2,"y0":0,"y1":9.9}]},{"parcel":79,"floors":19,"parts":[{"e0":-63.1,"e1":-43.2,"n0":18.1,"n1":44,"y0":0,"y1":62.7}]},{"parcel":80,"floors":13,"parts":[{"e0":-36.1,"e1":-24.9,"n0":19.1,"n1":43.6,"y0":0,"y1":42.9}]},{"parcel":81,"floors":3,"parts":[{"e0":-18.7,"e1":-3.2,"n0":18.7,"n1":43.6,"y0":0,"y1":9.9}]},{"parcel":82,"floors":2,"parts":[{"e0":2.1,"e1":17.9,"n0":16.8,"n1":43.2,"y0":0,"y1":6.6}]},{"parcel":83,"floors":2,"parts":[{"e0":-64.2,"e1":-37.4,"n0":56.8,"n1":92.1,"y0":0,"y1":6.6}]},{"parcel":84,"floors":2,"parts":[{"e0":-31.9,"e1":-16.5,"n0":58.4,"n1":91.6,"y0":0,"y1":6.6}]},{"parcel":85,"floors":2,"parts":[{"e0":-12.7,"e1":2,"n0":57.9,"n1":92.1,"y0":0,"y1":6.6}]},{"parcel":86,"floors":3,"parts":[{"e0":6.6,"e1":19.4,"n0":58.1,"n1":93.7,"y0":0,"y1":9.9}]},{"parcel":87,"floors":2,"parts":[{"e0":-62.6,"e1":-47.1,"n0":98,"n1":132,"y0":0,"y1":6.6}]},{"parcel":88,"floors":5,"parts":[{"e0":-40.8,"e1":-26.9,"n0":98.6,"n1":132.7,"y0":0,"y1":16.5}]},{"parcel":89,"floors":2,"parts":[{"e0":-21.2,"e1":5.2,"n0":98.3,"n1":133.8,"y0":0,"y1":6.6}]},{"parcel":91,"floors":11,"parts":[{"e0":-64,"e1":-52.1,"n0":149.9,"n1":189.7,"y0":0,"y1":36.3}]},{"parcel":92,"floors":4,"parts":[{"e0":-46.2,"e1":-25.2,"n0":149.7,"n1":190.2,"y0":0,"y1":13.2}]},{"parcel":93,"floors":2,"parts":[{"e0":-19.8,"e1":4.6,"n0":148.8,"n1":189.4,"y0":0,"y1":6.6}]},{"parcel":95,"floors":2,"parts":[{"e0":-62.1,"e1":-46.8,"n0":194.7,"n1":235.3,"y0":0,"y1":6.6}]},{"parcel":96,"floors":14,"parts":[{"e0":-41.5,"e1":-18.1,"n0":195.5,"n1":236.9,"y0":0,"y1":12},{"e0":-36.5,"e1":-23.1,"n0":200.5,"n1":231.9,"y0":12,"y1":48.3}]},{"parcel":97,"floors":3,"parts":[{"e0":-12.6,"e1":3.5,"n0":196.5,"n1":237.4,"y0":0,"y1":9.9}]},{"parcel":98,"floors":5,"parts":[{"e0":8.6,"e1":17.4,"n0":194.6,"n1":236.4,"y0":0,"y1":16.5}]},{"parcel":99,"floors":2,"parts":[{"e0":31.7,"e1":56.3,"n0":-223.9,"n1":-185.3,"y0":0,"y1":6.6}]},{"parcel":100,"floors":18,"parts":[{"e0":60.6,"e1":72.9,"n0":-223.4,"n1":-185.7,"y0":0,"y1":59.4}]},{"parcel":102,"floors":7,"parts":[{"e0":32.8,"e1":51.3,"n0":-180,"n1":-140.1,"y0":0,"y1":23.1}]},{"parcel":103,"floors":10,"parts":[{"e0":57.6,"e1":76.6,"n0":-179.6,"n1":-141.9,"y0":0,"y1":12},{"e0":62.6,"e1":71.6,"n0":-174.6,"n1":-146.9,"y0":12,"y1":35.1}]},{"parcel":104,"floors":9,"parts":[{"e0":83.6,"e1":97.6,"n0":-180.3,"n1":-141.1,"y0":0,"y1":29.7}]},{"parcel":106,"floors":7,"parts":[{"e0":31.3,"e1":50.6,"n0":-124.1,"n1":-79.4,"y0":0,"y1":23.1}]},{"parcel":107,"floors":7,"parts":[{"e0":56.3,"e1":72.1,"n0":-125.1,"n1":-79.1,"y0":0,"y1":23.1}]},{"parcel":108,"floors":5,"parts":[{"e0":77.7,"e1":95.8,"n0":-125.7,"n1":-79.3,"y0":0,"y1":16.5}]},{"parcel":109,"floors":11,"parts":[{"e0":100.7,"e1":110.1,"n0":-125.2,"n1":-80,"y0":0,"y1":36.3}]},{"parcel":110,"floors":11,"parts":[{"e0":32.3,"e1":46.7,"n0":-73.7,"n1":-31,"y0":0,"y1":36.3}]},{"parcel":111,"floors":8,"parts":[{"e0":52,"e1":64.7,"n0":-75.8,"n1":-30,"y0":0,"y1":26.4}]},{"parcel":112,"floors":2,"parts":[{"e0":68.8,"e1":95,"n0":-74.1,"n1":-29.6,"y0":0,"y1":6.6}]},{"parcel":113,"floors":7,"parts":[{"e0":100.8,"e1":109.2,"n0":-73.7,"n1":-30.5,"y0":0,"y1":23.1}]},{"parcel":114,"floors":7,"parts":[{"e0":32.1,"e1":53.7,"n0":-12.9,"n1":43.2,"y0":0,"y1":23.1}]},{"parcel":115,"floors":2,"parts":[{"e0":58.3,"e1":72.6,"n0":-12.5,"n1":44.3,"y0":0,"y1":6.6}]},{"parcel":116,"floors":13,"parts":[{"e0":76.7,"e1":91.3,"n0":-12.5,"n1":44.7,"y0":0,"y1":12},{"e0":81.7,"e1":86.3,"n0":-7.5,"n1":39.7,"y0":12,"y1":45}]},{"parcel":118,"floors":3,"parts":[{"e0":31.2,"e1":57.5,"n0":57.2,"n1":91.5,"y0":0,"y1":9.9}]},{"parcel":119,"floors":17,"parts":[{"e0":62.7,"e1":76.8,"n0":57.6,"n1":93.2,"y0":0,"y1":56.1}]},{"parcel":120,"floors":6,"parts":[{"e0":82.1,"e1":92.8,"n0":57.6,"n1":94,"y0":0,"y1":19.8}]},{"parcel":121,"floors":8,"parts":[{"e0":98.7,"e1":109.9,"n0":57.7,"n1":91.7,"y0":0,"y1":26.4}]},{"parcel":122,"floors":4,"parts":[{"e0":31.5,"e1":54.4,"n0":98.2,"n1":133.5,"y0":0,"y1":13.2}]},{"parcel":123,"floors":10,"parts":[{"e0":58.6,"e1":79.9,"n0":98.8,"n1":134.1,"y0":0,"y1":12},{"e0":63.6,"e1":74.9,"n0":103.8,"n1":129.1,"y0":12,"y1":35.1}]},{"parcel":124,"floors":2,"parts":[{"e0":84.5,"e1":109.1,"n0":98,"n1":134,"y0":0,"y1":6.6}]},{"parcel":125,"floors":2,"parts":[{"e0":31.6,"e1":43.1,"n0":148.1,"n1":190.6,"y0":0,"y1":6.6}]},{"parcel":126,"floors":7,"parts":[{"e0":47.5,"e1":68,"n0":147.8,"n1":190.8,"y0":0,"y1":23.1}]},{"parcel":127,"floors":15,"parts":[{"e0":75.3,"e1":87.5,"n0":149.4,"n1":191,"y0":0,"y1":49.5}]},{"parcel":128,"floors":21,"parts":[{"e0":91.8,"e1":110.5,"n0":149.7,"n1":190.9,"y0":0,"y1":12},{"e0":96.8,"e1":105.5,"n0":154.7,"n1":185.9,"y0":12,"y1":71.4}]},{"parcel":129,"floors":10,"parts":[{"e0":30.9,"e1":46.6,"n0":196.3,"n1":235.5,"y0":0,"y1":33}]},{"parcel":130,"floors":7,"parts":[{"e0":54,"e1":67.3,"n0":194.5,"n1":237.3,"y0":0,"y1":23.1}]},{"parcel":131,"floors":8,"parts":[{"e0":73.8,"e1":87.5,"n0":194.1,"n1":235.2,"y0":0,"y1":26.4}]},{"parcel":132,"floors":16,"parts":[{"e0":92.8,"e1":110.9,"n0":196.3,"n1":237.4,"y0":0,"y1":12},{"e0":97.8,"e1":105.9,"n0":201.3,"n1":232.4,"y0":12,"y1":54.9}]},{"parcel":133,"floors":14,"parts":[{"e0":128.7,"e1":145.2,"n0":-224.9,"n1":-185,"y0":0,"y1":46.2}]},{"parcel":134,"floors":6,"parts":[{"e0":150.5,"e1":167,"n0":-224.1,"n1":-185.6,"y0":0,"y1":19.8}]},{"parcel":135,"floors":10,"parts":[{"e0":172.7,"e1":188.4,"n0":-223.5,"n1":-185.4,"y0":0,"y1":33}]},{"parcel":136,"floors":3,"parts":[{"e0":194.7,"e1":214.7,"n0":-224.8,"n1":-185.7,"y0":0,"y1":9.9}]},{"parcel":138,"floors":21,"parts":[{"e0":156.5,"e1":167.6,"n0":-179.1,"n1":-141.9,"y0":0,"y1":69.3}]},{"parcel":139,"floors":7,"parts":[{"e0":173.6,"e1":193.3,"n0":-179.1,"n1":-139.9,"y0":0,"y1":23.1}]},{"parcel":140,"floors":2,"parts":[{"e0":198.2,"e1":213.3,"n0":-179.8,"n1":-141.9,"y0":0,"y1":6.6}]},{"parcel":141,"floors":5,"parts":[{"e0":128.1,"e1":152.7,"n0":-125.1,"n1":-80.7,"y0":0,"y1":16.5}]},{"parcel":142,"floors":9,"parts":[{"e0":156.2,"e1":171.3,"n0":-124.9,"n1":-80,"y0":0,"y1":29.7}]},{"parcel":144,"floors":3,"parts":[{"e0":204,"e1":214.7,"n0":-126.2,"n1":-80.3,"y0":0,"y1":9.9}]},{"parcel":145,"floors":11,"parts":[{"e0":127.7,"e1":142.8,"n0":-73.6,"n1":-29,"y0":0,"y1":36.3}]},{"parcel":146,"floors":21,"parts":[{"e0":149.8,"e1":171.8,"n0":-75.9,"n1":-29.6,"y0":0,"y1":12},{"e0":154.8,"e1":166.8,"n0":-70.9,"n1":-34.6,"y0":12,"y1":71.4}]},{"parcel":147,"floors":18,"parts":[{"e0":176.2,"e1":196,"n0":-73.9,"n1":-30.4,"y0":0,"y1":12},{"e0":181.2,"e1":191,"n0":-68.9,"n1":-35.4,"y0":12,"y1":61.5}]},{"parcel":149,"floors":3,"parts":[{"e0":127.4,"e1":141.8,"n0":-12.1,"n1":45.1,"y0":0,"y1":9.9}]},{"parcel":150,"floors":10,"parts":[{"e0":146.7,"e1":165.9,"n0":-11.6,"n1":45.2,"y0":0,"y1":12},{"e0":151.7,"e1":160.9,"n0":-6.6,"n1":40.2,"y0":12,"y1":35.1}]},{"parcel":151,"floors":10,"parts":[{"e0":171.2,"e1":196.1,"n0":-12.5,"n1":44.4,"y0":0,"y1":12},{"e0":176.2,"e1":191.1,"n0":-7.5,"n1":39.4,"y0":12,"y1":35.1}]},{"parcel":152,"floors":9,"parts":[{"e0":202,"e1":215.3,"n0":-11.9,"n1":43.5,"y0":0,"y1":12},{"e0":207,"e1":210.3,"n0":-6.9,"n1":38.5,"y0":12,"y1":31.8}]},{"parcel":153,"floors":6,"parts":[{"e0":127.4,"e1":146.6,"n0":58.6,"n1":93.9,"y0":0,"y1":19.8}]},{"parcel":154,"floors":21,"parts":[{"e0":152.9,"e1":174.8,"n0":56.8,"n1":91.7,"y0":0,"y1":12},{"e0":157.9,"e1":169.8,"n0":61.8,"n1":86.7,"y0":12,"y1":71.4}]},{"parcel":156,"floors":3,"parts":[{"e0":200.2,"e1":214.4,"n0":57.7,"n1":92.1,"y0":0,"y1":9.9}]},{"parcel":159,"floors":14,"parts":[{"e0":179,"e1":195.6,"n0":98.5,"n1":134.1,"y0":0,"y1":46.2}]},{"parcel":160,"floors":2,"parts":[{"e0":199.9,"e1":213.9,"n0":99.3,"n1":133.8,"y0":0,"y1":6.6}]},{"parcel":161,"floors":20,"parts":[{"e0":128.2,"e1":140.3,"n0":149.5,"n1":188.6,"y0":0,"y1":66}]},{"parcel":162,"floors":21,"parts":[{"e0":144,"e1":160,"n0":149.1,"n1":189.3,"y0":0,"y1":69.3}]},{"parcel":163,"floors":18,"parts":[{"e0":165.8,"e1":189.9,"n0":148.9,"n1":190.2,"y0":0,"y1":12},{"e0":170.8,"e1":184.9,"n0":153.9,"n1":185.2,"y0":12,"y1":61.5}]},{"parcel":164,"floors":2,"parts":[{"e0":193.9,"e1":214.5,"n0":148.5,"n1":190.5,"y0":0,"y1":6.6}]},{"parcel":165,"floors":18,"parts":[{"e0":126.7,"e1":153.3,"n0":195.7,"n1":236.6,"y0":0,"y1":12},{"e0":131.7,"e1":148.3,"n0":200.7,"n1":231.6,"y0":12,"y1":61.5}]},{"parcel":166,"floors":12,"parts":[{"e0":158.1,"e1":180.2,"n0":196.5,"n1":235.9,"y0":0,"y1":12},{"e0":163.1,"e1":175.2,"n0":201.5,"n1":230.9,"y0":12,"y1":41.7}]},{"parcel":167,"floors":2,"parts":[{"e0":187,"e1":213.6,"n0":195.5,"n1":235.2,"y0":0,"y1":6.6}]},{"parcel":168,"floors":8,"parts":[{"e0":227.1,"e1":240,"n0":-223.1,"n1":-184.9,"y0":0,"y1":26.4}]},{"parcel":169,"floors":13,"parts":[{"e0":245.6,"e1":261.6,"n0":-225.2,"n1":-184.4,"y0":0,"y1":42.9}]},{"parcel":170,"floors":6,"parts":[{"e0":265.2,"e1":285.2,"n0":-225.5,"n1":-185.8,"y0":0,"y1":19.8}]},{"parcel":171,"floors":6,"parts":[{"e0":291.9,"e1":304.1,"n0":-223.6,"n1":-185.7,"y0":0,"y1":19.8}]},{"parcel":172,"floors":3,"parts":[{"e0":228.2,"e1":243.3,"n0":-179.2,"n1":-139.7,"y0":0,"y1":9.9}]},{"parcel":173,"floors":2,"parts":[{"e0":249,"e1":264.6,"n0":-180.4,"n1":-139.5,"y0":0,"y1":6.6}]},{"parcel":174,"floors":8,"parts":[{"e0":270.9,"e1":303.6,"n0":-180.7,"n1":-140.5,"y0":0,"y1":26.4}]},{"parcel":176,"floors":3,"parts":[{"e0":259.7,"e1":283.8,"n0":-126.4,"n1":-80.3,"y0":0,"y1":9.9}]},{"parcel":177,"floors":2,"parts":[{"e0":288.8,"e1":303.3,"n0":-125.8,"n1":-79.5,"y0":0,"y1":6.6}]},{"parcel":178,"floors":2,"parts":[{"e0":227,"e1":247.5,"n0":-73.6,"n1":-29.5,"y0":0,"y1":6.6}]},{"parcel":179,"floors":13,"parts":[{"e0":253,"e1":272.1,"n0":-74,"n1":-28.7,"y0":0,"y1":12},{"e0":258,"e1":267.1,"n0":-69,"n1":-33.7,"y0":12,"y1":45}]},{"parcel":180,"floors":4,"parts":[{"e0":279.5,"e1":303.2,"n0":-73.6,"n1":-30.9,"y0":0,"y1":13.2}]},{"parcel":181,"floors":12,"parts":[{"e0":227.7,"e1":241.8,"n0":-12.5,"n1":44.8,"y0":0,"y1":12},{"e0":232.7,"e1":236.8,"n0":-7.5,"n1":39.8,"y0":12,"y1":41.7}]},{"parcel":182,"floors":5,"parts":[{"e0":247.6,"e1":267.1,"n0":-13.3,"n1":45.4,"y0":0,"y1":16.5}]},{"parcel":183,"floors":5,"parts":[{"e0":273.4,"e1":285.6,"n0":-13.4,"n1":44.6,"y0":0,"y1":16.5}]},{"parcel":184,"floors":16,"parts":[{"e0":291.8,"e1":305.4,"n0":-12.8,"n1":43.2,"y0":0,"y1":12},{"e0":296.8,"e1":300.4,"n0":-7.8,"n1":38.2,"y0":12,"y1":54.9}]},{"parcel":185,"floors":7,"parts":[{"e0":227,"e1":243.1,"n0":58.5,"n1":92.3,"y0":0,"y1":23.1}]},{"parcel":186,"floors":2,"parts":[{"e0":247.5,"e1":264.1,"n0":57.9,"n1":94,"y0":0,"y1":6.6}]},{"parcel":187,"floors":2,"parts":[{"e0":269.1,"e1":287.4,"n0":58,"n1":93.4,"y0":0,"y1":6.6}]},{"parcel":188,"floors":3,"parts":[{"e0":291.3,"e1":304.8,"n0":56.9,"n1":92.3,"y0":0,"y1":9.9}]},{"parcel":189,"floors":6,"parts":[{"e0":226.7,"e1":251.3,"n0":98.3,"n1":132.9,"y0":0,"y1":19.8}]},{"parcel":190,"floors":7,"parts":[{"e0":258.1,"e1":282,"n0":99.1,"n1":133.7,"y0":0,"y1":23.1}]},{"parcel":191,"floors":8,"parts":[{"e0":286,"e1":304.4,"n0":98,"n1":134.2,"y0":0,"y1":26.4}]},{"parcel":192,"floors":2,"parts":[{"e0":228.5,"e1":245.5,"n0":149.8,"n1":190.7,"y0":0,"y1":6.6}]},{"parcel":193,"floors":3,"parts":[{"e0":250.5,"e1":274.9,"n0":148.6,"n1":191,"y0":0,"y1":9.9}]},{"parcel":194,"floors":6,"parts":[{"e0":280.6,"e1":304.2,"n0":149.3,"n1":189.9,"y0":0,"y1":19.8}]},{"parcel":195,"floors":4,"parts":[{"e0":228.3,"e1":250.6,"n0":194.9,"n1":235.8,"y0":0,"y1":13.2}]},{"parcel":196,"floors":2,"parts":[{"e0":255.6,"e1":273.3,"n0":194.8,"n1":237.1,"y0":0,"y1":6.6}]}],"trees":[[-261,-227.8,1.1],[-251,-227.8,0.9],[-241,-227.8,1.2],[-231,-227.8,0.9],[-221,-227.8,1],[-211,-227.8,1.1],[-201,-227.8,1],[-191,-227.8,1.2],[-261,-136.7,0.9],[-251,-136.7,0.9],[-241,-136.7,1.1],[-231,-136.7,0.9],[-221,-136.7,1],[-211,-136.7,1],[-201,-136.7,1],[-191,-136.7,1.2],[-267.8,-221,1.1],[-267.8,-211,1.1],[-267.8,-201,1.1],[-267.8,-191,1.1],[-267.8,-181,0.9],[-267.8,-171,1.1],[-267.8,-161,0.9],[-267.8,-151,0.9],[-174.7,-221,1.2],[-174.7,-211,1],[-174.7,-201,0.9],[-174.7,-191,0.9],[-174.7,-181,0.9],[-174.7,-171,1],[-174.7,-161,1.1],[-174.7,-151,1],[-261,-129.3,1.1],[-251,-129.3,1.1],[-241,-129.3,0.9],[-231,-129.3,1.1],[-221,-129.3,1],[-211,-129.3,0.9],[-201,-129.3,0.9],[-191,-129.3,0.9],[-261,-25.2,1.2],[-251,-25.2,0.9],[-241,-25.2,1],[-231,-25.2,1.1],[-221,-25.2,0.9],[-211,-25.2,1],[-201,-25.2,1.2],[-191,-25.2,1],[-267.8,-122,1],[-267.8,-112,0.9],[-267.8,-102,1.2],[-267.8,-92,1.2],[-267.8,-82,1],[-267.8,-72,1],[-267.8,-62,1],[-267.8,-52,1.1],[-267.8,-42,1.1],[-174.7,-122,0.9],[-174.7,-112,1.1],[-174.7,-102,0.9],[-174.7,-92,1],[-174.7,-82,1.1],[-174.7,-72,1.1],[-174.7,-62,1],[-174.7,-52,0.9],[-174.7,-42,0.9],[-261,-16.8,1],[-251,-16.8,1.1],[-241,-16.8,0.9],[-231,-16.8,1],[-221,-16.8,1.1],[-211,-16.8,1.1],[-201,-16.8,1.1],[-191,-16.8,1],[-261,47.8,0.9],[-251,47.8,0.9],[-241,47.8,0.9],[-231,47.8,1],[-221,47.8,1],[-211,47.8,0.9],[-201,47.8,0.9],[-191,47.8,0.9],[-267.8,-9,1.1],[-267.8,1,0.9],[-267.8,11,1],[-267.8,21,1],[-267.8,31,1.1],[-267.8,41,1],[-174.7,-9,1.1],[-174.7,1,1.2],[-174.7,11,1.1],[-174.7,21,1.2],[-174.7,31,1],[-174.7,41,0.9],[-261,54.2,1.1],[-251,54.2,1],[-241,54.2,1.1],[-231,54.2,1.2],[-221,54.2,1],[-211,54.2,1.2],[-201,54.2,0.9],[-191,54.2,1.1],[-261,137.3,1.1],[-251,137.3,1.1],[-241,137.3,1.1],[-231,137.3,1.1],[-221,137.3,1.1],[-211,137.3,0.9],[-201,137.3,1.1],[-191,137.3,1.1],[-267.8,61,1],[-267.8,71,0.9],[-267.8,81,1],[-267.8,91,1],[-267.8,101,1],[-267.8,111,1.1],[-267.8,121,1.1],[-174.7,61,1],[-174.7,71,1],[-174.7,81,1],[-174.7,91,1.1],[-174.7,101,1],[-174.7,111,1.2],[-174.7,121,1.2],[-261,144.7,1],[-251,144.7,1.1],[-241,144.7,1.1],[-231,144.7,1.1],[-221,144.7,1.1],[-211,144.7,1.2],[-201,144.7,0.9],[-191,144.7,1],[-261,239.8,1.1],[-251,239.8,1.1],[-241,239.8,1],[-231,239.8,0.9],[-221,239.8,1.2],[-211,239.8,1],[-201,239.8,0.9],[-191,239.8,1],[-267.8,152,1.2],[-267.8,162,0.9],[-267.8,172,0.9],[-267.8,182,1.2],[-267.8,192,1.1],[-267.8,202,1.1],[-267.8,212,1.1],[-267.8,222,1],[-267.8,232,1.2],[-174.7,152,1],[-174.7,162,1.1],[-174.7,172,1.1],[-174.7,182,1],[-174.7,192,1.1],[-174.7,202,0.9],[-174.7,212,1.2],[-174.7,222,0.9],[-174.7,232,1.2],[-160,-227.8,1.1],[-150,-227.8,0.9],[-140,-227.8,1.1],[-130,-227.8,0.9],[-120,-227.8,1],[-110,-227.8,1.1],[-100,-227.8,0.9],[-90,-227.8,1.1],[-160,-136.7,0.9],[-150,-136.7,0.9],[-140,-136.7,1],[-130,-136.7,1],[-120,-136.7,1],[-110,-136.7,1],[-100,-136.7,1.1],[-90,-136.7,1.1],[-167.3,-221,1.1],[-167.3,-211,1.1],[-167.3,-201,1],[-167.3,-191,1.1],[-167.3,-181,1],[-167.3,-171,1.1],[-167.3,-161,0.9],[-167.3,-151,1],[-74.7,-221,0.9],[-74.7,-211,1],[-74.7,-201,0.9],[-74.7,-191,1.1],[-74.7,-181,0.9],[-74.7,-171,1.2],[-74.7,-161,0.9],[-74.7,-151,1.1],[-160,-129.3,1],[-150,-129.3,0.9],[-140,-129.3,0.9],[-130,-129.3,1.1],[-120,-129.3,1],[-110,-129.3,1.1],[-100,-129.3,1],[-90,-129.3,1.1],[-160,-25.2,0.9],[-150,-25.2,1],[-140,-25.2,1.2],[-130,-25.2,1],[-120,-25.2,0.9],[-110,-25.2,1.1],[-100,-25.2,1.1],[-90,-25.2,0.9],[-167.3,-122,1.1],[-167.3,-112,1],[-167.3,-102,1.1],[-167.3,-92,1],[-167.3,-82,1.1],[-167.3,-72,1],[-167.3,-62,1.1],[-167.3,-52,1.2],[-167.3,-42,1],[-74.7,-122,1.2],[-74.7,-112,1],[-74.7,-102,1.2],[-74.7,-92,1],[-74.7,-82,1],[-74.7,-72,1],[-74.7,-62,1.1],[-74.7,-52,1.2],[-74.7,-42,1.1],[-160,-16.8,1],[-150,-16.8,1.1],[-140,-16.8,1.2],[-130,-16.8,0.9],[-120,-16.8,1],[-110,-16.8,1],[-100,-16.8,1.1],[-90,-16.8,1],[-160,47.8,1.1],[-150,47.8,0.9],[-140,47.8,1.1],[-130,47.8,1],[-120,47.8,1],[-110,47.8,1.1],[-100,47.8,1.1],[-90,47.8,1.1],[-167.3,-9,1.1],[-167.3,1,1],[-167.3,11,0.9],[-167.3,21,0.9],[-167.3,31,0.9],[-167.3,41,1.1],[-74.7,-9,0.9],[-74.7,1,1.2],[-74.7,11,1.1],[-74.7,21,1],[-74.7,31,1.1],[-74.7,41,1],[-160,54.2,0.9],[-150,54.2,0.9],[-140,54.2,1],[-130,54.2,1.2],[-120,54.2,1.2],[-110,54.2,1.1],[-100,54.2,1],[-90,54.2,1.1],[-160,137.3,1],[-150,137.3,1],[-140,137.3,0.9],[-130,137.3,1.2],[-120,137.3,1],[-110,137.3,0.9],[-100,137.3,0.9],[-90,137.3,1],[-167.3,61,1],[-167.3,71,0.9],[-167.3,81,0.9],[-167.3,91,1],[-167.3,101,1],[-167.3,111,1.2],[-167.3,121,0.9],[-74.7,61,1.2],[-74.7,71,1.1],[-74.7,81,1.2],[-74.7,91,0.9],[-74.7,101,1.2],[-74.7,111,1],[-74.7,121,1.1],[-160,144.7,1.2],[-150,144.7,0.9],[-140,144.7,0.9],[-130,144.7,0.9],[-120,144.7,1.1],[-110,144.7,1.2],[-100,144.7,1.1],[-90,144.7,1.1],[-160,239.8,1],[-150,239.8,1.2],[-140,239.8,1.2],[-130,239.8,0.9],[-120,239.8,1.1],[-110,239.8,1.1],[-100,239.8,1.2],[-90,239.8,1],[-167.3,152,0.9],[-167.3,162,1.1],[-167.3,172,1],[-167.3,182,1.2],[-167.3,192,1.2],[-167.3,202,1.2],[-167.3,212,1.2],[-167.3,222,1.1],[-167.3,232,0.9],[-74.7,152,0.9],[-74.7,162,1],[-74.7,172,1.1],[-74.7,182,1.1],[-74.7,192,1],[-74.7,202,1],[-74.7,212,1],[-74.7,222,0.9],[-74.7,232,1.2],[-60,-227.8,0.9],[-50,-227.8,1],[-40,-227.8,1.1],[-30,-227.8,1],[-20,-227.8,0.9],[-10,-227.8,1.2],[0,-227.8,1],[10,-227.8,1.1],[-60,-136.7,1.1],[-50,-136.7,1],[-40,-136.7,1],[-30,-136.7,0.9],[-20,-136.7,1.1],[-10,-136.7,1.1],[0,-136.7,1],[10,-136.7,0.9],[-67.3,-221,1.1],[-67.3,-211,0.9],[-67.3,-201,1],[-67.3,-191,0.9],[-67.3,-181,1],[-67.3,-171,1.1],[-67.3,-161,0.9],[-67.3,-151,0.9],[21.8,-221,1.1],[21.8,-211,1.1],[21.8,-201,1.2],[21.8,-191,0.9],[21.8,-181,1.1],[21.8,-171,1.2],[21.8,-161,1],[21.8,-151,1.1],[-60,-129.3,1.1],[-50,-129.3,1.1],[-40,-129.3,0.9],[-30,-129.3,1.2],[-20,-129.3,1],[-10,-129.3,0.9],[0,-129.3,0.9],[10,-129.3,1.2],[-60,-25.2,1.2],[-50,-25.2,0.9],[-40,-25.2,0.9],[-30,-25.2,0.9],[-20,-25.2,1.2],[-10,-25.2,0.9],[0,-25.2,1.1],[10,-25.2,1.1],[-67.3,-122,1.1],[-67.3,-112,0.9],[-67.3,-102,0.9],[-67.3,-92,1],[-67.3,-82,1.1],[-67.3,-72,1],[-67.3,-62,0.9],[-67.3,-52,1.1],[-67.3,-42,0.9],[21.8,-122,1.2],[21.8,-112,1.2],[21.8,-102,1],[21.8,-92,1],[21.8,-82,1],[21.8,-72,1.1],[21.8,-62,0.9],[21.8,-52,1.2],[21.8,-42,1.2],[-60,-16.8,1.1],[-50,-16.8,1],[-40,-16.8,0.9],[-30,-16.8,0.9],[-20,-16.8,1],[-10,-16.8,1.1],[0,-16.8,1.1],[10,-16.8,1.1],[-60,47.8,1],[-50,47.8,1.1],[-40,47.8,1.1],[-30,47.8,0.9],[-20,47.8,1.2],[-10,47.8,0.9],[0,47.8,1.1],[10,47.8,1.2],[-67.3,-9,1.1],[-67.3,1,1.1],[-67.3,11,0.9],[-67.3,21,1.1],[-67.3,31,0.9],[-67.3,41,0.9],[21.8,-9,1],[21.8,1,1.1],[21.8,11,1.1],[21.8,21,1],[21.8,31,1.1],[21.8,41,0.9],[-60,54.2,0.9],[-50,54.2,0.9],[-40,54.2,1.1],[-30,54.2,1.1],[-20,54.2,0.9],[-10,54.2,0.9],[0,54.2,0.9],[10,54.2,1.2],[-60,137.3,1],[-50,137.3,1.2],[-40,137.3,1.1],[-30,137.3,1],[-20,137.3,0.9],[-10,137.3,0.9],[0,137.3,0.9],[10,137.3,1],[-67.3,61,1.2],[-67.3,71,1],[-67.3,81,0.9],[-67.3,91,0.9],[-67.3,101,1],[-67.3,111,0.9],[-67.3,121,0.9],[21.8,61,1],[21.8,71,1.2],[21.8,81,1.1],[21.8,91,1.1],[21.8,101,1],[21.8,111,1],[21.8,121,1.1],[-60,144.7,1.2],[-50,144.7,1],[-40,144.7,1.2],[-30,144.7,0.9],[-20,144.7,1.2],[-10,144.7,1],[0,144.7,1.2],[10,144.7,0.9],[-60,239.8,0.9],[-50,239.8,1],[-40,239.8,0.9],[-30,239.8,1],[-20,239.8,1],[-10,239.8,1.1],[0,239.8,1.2],[10,239.8,0.9],[-67.3,152,0.9],[-67.3,162,1.2],[-67.3,172,1.1],[-67.3,182,1.1],[-67.3,192,1.1],[-67.3,202,0.9],[-67.3,212,1.1],[-67.3,222,1.1],[-67.3,232,1],[21.8,152,0.9],[21.8,162,1.1],[21.8,172,1],[21.8,182,0.9],[21.8,192,1],[21.8,202,1.1],[21.8,212,1.2],[21.8,222,0.9],[21.8,232,0.9],[35,-227.8,1],[45,-227.8,0.9],[55,-227.8,1.1],[65,-227.8,1],[75,-227.8,1],[85,-227.8,1.1],[95,-227.8,1.1],[105,-227.8,0.9],[35,-136.7,1],[45,-136.7,1.1],[55,-136.7,0.9],[65,-136.7,1],[75,-136.7,1.1],[85,-136.7,0.9],[95,-136.7,1.2],[105,-136.7,1],[28.2,-221,1.1],[28.2,-211,1],[28.2,-201,1],[28.2,-191,1.1],[28.2,-181,1.1],[28.2,-171,1.2],[28.2,-161,0.9],[28.2,-151,1],[114.8,-221,0.9],[114.8,-211,1.2],[114.8,-201,1],[114.8,-191,1.2],[114.8,-181,1.1],[114.8,-171,0.9],[114.8,-161,0.9],[114.8,-151,1.2],[35,-129.3,1],[45,-129.3,1],[55,-129.3,1.2],[65,-129.3,1.1],[75,-129.3,1],[85,-129.3,1],[95,-129.3,1.2],[105,-129.3,0.9],[35,-25.2,1.1],[45,-25.2,1.1],[55,-25.2,1.2],[65,-25.2,1],[75,-25.2,1],[85,-25.2,1],[95,-25.2,0.9],[105,-25.2,1],[28.2,-122,1.1],[28.2,-112,1.1],[28.2,-102,1.2],[28.2,-92,1.2],[28.2,-82,0.9],[28.2,-72,1],[28.2,-62,0.9],[28.2,-52,1.1],[28.2,-42,1.1],[114.8,-122,1.1],[114.8,-112,1.1],[114.8,-102,1.1],[114.8,-92,1.1],[114.8,-82,1],[114.8,-72,0.9],[114.8,-62,1],[114.8,-52,1],[114.8,-42,1.1],[35,-16.8,1.2],[45,-16.8,1],[55,-16.8,1.1],[65,-16.8,1.1],[75,-16.8,1.1],[85,-16.8,1.1],[95,-16.8,1.1],[105,-16.8,0.9],[35,47.8,1.1],[45,47.8,0.9],[55,47.8,1.1],[65,47.8,0.9],[75,47.8,1.1],[85,47.8,1],[95,47.8,1],[105,47.8,0.9],[28.2,-9,1],[28.2,1,1.2],[28.2,11,1],[28.2,21,1.1],[28.2,31,1],[28.2,41,1],[114.8,-9,1.2],[114.8,1,1],[114.8,11,0.9],[114.8,21,0.9],[114.8,31,0.9],[114.8,41,1],[35,54.2,0.9],[45,54.2,1],[55,54.2,1.1],[65,54.2,1],[75,54.2,0.9],[85,54.2,1.1],[95,54.2,0.9],[105,54.2,0.9],[35,137.3,1.1],[45,137.3,0.9],[55,137.3,0.9],[65,137.3,0.9],[75,137.3,1.1],[85,137.3,1.1],[95,137.3,0.9],[105,137.3,1.1],[28.2,61,1.2],[28.2,71,1.2],[28.2,81,1],[28.2,91,1],[28.2,101,0.9],[28.2,111,1.2],[28.2,121,0.9],[114.8,61,1.1],[114.8,71,1.2],[114.8,81,1],[114.8,91,1],[114.8,101,1],[114.8,111,1],[114.8,121,1],[35,144.7,0.9],[45,144.7,1.2],[55,144.7,1.1],[65,144.7,1.1],[75,144.7,1],[85,144.7,1.2],[95,144.7,1.1],[105,144.7,0.9],[35,239.8,1.2],[45,239.8,0.9],[55,239.8,1],[65,239.8,1],[75,239.8,1],[85,239.8,1],[95,239.8,1],[105,239.8,1],[28.2,152,0.9],[28.2,162,1],[28.2,172,0.9],[28.2,182,1.2],[28.2,192,1.2],[28.2,202,1.2],[28.2,212,1.2],[28.2,222,1],[28.2,232,1],[114.8,152,0.9],[114.8,162,1.1],[114.8,172,0.9],[114.8,182,1.1],[114.8,192,0.9],[114.8,202,0.9],[114.8,212,1.2],[114.8,222,1.1],[114.8,232,0.9],[131,-227.8,1.2],[141,-227.8,1.1],[151,-227.8,1.1],[161,-227.8,0.9],[171,-227.8,1],[181,-227.8,1.1],[191,-227.8,0.9],[201,-227.8,0.9],[211,-227.8,1.2],[131,-136.7,0.9],[141,-136.7,0.9],[151,-136.7,1.1],[161,-136.7,1],[171,-136.7,1.1],[181,-136.7,1.2],[191,-136.7,0.9],[201,-136.7,0.9],[211,-136.7,1],[123.2,-221,1],[123.2,-211,1],[123.2,-201,0.9],[123.2,-191,1],[123.2,-181,1],[123.2,-171,1],[123.2,-161,1.1],[123.2,-151,1],[217.8,-221,1],[217.8,-211,0.9],[217.8,-201,0.9],[217.8,-191,0.9],[217.8,-181,1],[217.8,-171,1.1],[217.8,-161,1],[217.8,-151,1.1],[131,-129.3,1.2],[141,-129.3,1.1],[151,-129.3,1.1],[161,-129.3,0.9],[171,-129.3,1],[181,-129.3,1.1],[191,-129.3,1.2],[201,-129.3,1],[211,-129.3,1],[131,-25.2,1.1],[141,-25.2,0.9],[151,-25.2,0.9],[161,-25.2,1],[171,-25.2,1],[181,-25.2,0.9],[191,-25.2,1],[201,-25.2,1],[211,-25.2,0.9],[123.2,-122,1],[123.2,-112,1.2],[123.2,-102,1.2],[123.2,-92,0.9],[123.2,-82,1.1],[123.2,-72,0.9],[123.2,-62,0.9],[123.2,-52,0.9],[123.2,-42,0.9],[217.8,-122,1.1],[217.8,-112,1.2],[217.8,-102,0.9],[217.8,-92,1.1],[217.8,-82,0.9],[217.8,-72,1.2],[217.8,-62,1.1],[217.8,-52,0.9],[217.8,-42,1.1],[131,-16.8,1],[141,-16.8,0.9],[151,-16.8,1.2],[161,-16.8,1],[171,-16.8,1],[181,-16.8,1.1],[191,-16.8,1.2],[201,-16.8,0.9],[211,-16.8,1],[131,47.8,1.1],[141,47.8,1.1],[151,47.8,1.1],[161,47.8,0.9],[171,47.8,1.2],[181,47.8,1.1],[191,47.8,1.1],[201,47.8,1],[211,47.8,1],[123.2,-9,1],[123.2,1,1.2],[123.2,11,0.9],[123.2,21,1],[123.2,31,1],[123.2,41,1.1],[217.8,-9,0.9],[217.8,1,0.9],[217.8,11,1.2],[217.8,21,1.1],[217.8,31,0.9],[217.8,41,0.9],[131,54.2,1.1],[141,54.2,1.1],[151,54.2,1],[161,54.2,0.9],[171,54.2,1],[181,54.2,0.9],[191,54.2,1.1],[201,54.2,1.1],[211,54.2,1.1],[131,137.3,0.9],[141,137.3,1],[151,137.3,1],[161,137.3,0.9],[171,137.3,1.1],[181,137.3,1],[191,137.3,0.9],[201,137.3,1.2],[211,137.3,1],[123.2,61,1.2],[123.2,71,1],[123.2,81,1.1],[123.2,91,0.9],[123.2,101,1.2],[123.2,111,0.9],[123.2,121,0.9],[217.8,61,1.1],[217.8,71,1.1],[217.8,81,1],[217.8,91,0.9],[217.8,101,1.1],[217.8,111,0.9],[217.8,121,1.1],[131,144.7,1.1],[141,144.7,0.9],[151,144.7,0.9],[161,144.7,1.1],[171,144.7,0.9],[181,144.7,1.1],[191,144.7,1.2],[201,144.7,1.1],[211,144.7,1.1],[131,239.8,1.2],[141,239.8,1],[151,239.8,0.9],[161,239.8,1.1],[171,239.8,1.1],[181,239.8,1.2],[191,239.8,1],[201,239.8,1.1],[211,239.8,1],[123.2,152,1.1],[123.2,162,1.1],[123.2,172,1.1],[123.2,182,1.1],[123.2,192,1],[123.2,202,1],[123.2,212,1],[123.2,222,1.2],[123.2,232,0.9],[217.8,152,1.1],[217.8,162,0.9],[217.8,172,1.2],[217.8,182,1],[217.8,192,1.1],[217.8,202,1.1],[217.8,212,1.1],[217.8,222,1.1],[217.8,232,0.9],[231,-227.8,1],[241,-227.8,1],[251,-227.8,1],[261,-227.8,1.1],[271,-227.8,0.9],[281,-227.8,0.9],[291,-227.8,1],[301,-227.8,1.1],[231,-136.7,1],[241,-136.7,1.1],[251,-136.7,1.1],[261,-136.7,1],[271,-136.7,1],[281,-136.7,0.9],[291,-136.7,1],[301,-136.7,1],[224.2,-221,1.2],[224.2,-211,0.9],[224.2,-201,0.9],[224.2,-191,1.2],[224.2,-181,1.1],[224.2,-171,1.2],[224.2,-161,1.1],[224.2,-151,1.1],[307.8,-221,1],[307.8,-211,1],[307.8,-201,1],[307.8,-191,1.2],[307.8,-181,1.1],[307.8,-171,1],[307.8,-161,0.9],[307.8,-151,0.9],[231,-129.3,1],[241,-129.3,1.1],[251,-129.3,1],[261,-129.3,1.2],[271,-129.3,1.1],[281,-129.3,1.2],[291,-129.3,0.9],[301,-129.3,1],[231,-25.2,0.9],[241,-25.2,1],[251,-25.2,0.9],[261,-25.2,1],[271,-25.2,1],[281,-25.2,0.9],[291,-25.2,0.9],[301,-25.2,1],[224.2,-122,1.1],[224.2,-112,1.1],[224.2,-102,1.1],[224.2,-92,1.1],[224.2,-82,1],[224.2,-72,0.9],[224.2,-62,1.1],[224.2,-52,0.9],[224.2,-42,1.1],[307.8,-122,1],[307.8,-112,0.9],[307.8,-102,1],[307.8,-92,1.2],[307.8,-82,1.1],[307.8,-72,1.2],[307.8,-62,1],[307.8,-52,1.2],[307.8,-42,1],[231,-16.8,0.9],[241,-16.8,1],[251,-16.8,1.2],[261,-16.8,0.9],[271,-16.8,1],[281,-16.8,1],[291,-16.8,1.1],[301,-16.8,1],[231,47.8,1],[241,47.8,1.1],[251,47.8,1],[261,47.8,0.9],[271,47.8,0.9],[281,47.8,1.1],[291,47.8,0.9],[301,47.8,1],[224.2,-9,1.1],[224.2,1,1.1],[224.2,11,1.1],[224.2,21,1.1],[224.2,31,0.9],[224.2,41,0.9],[307.8,-9,0.9],[307.8,1,0.9],[307.8,11,0.9],[307.8,21,1.2],[307.8,31,1],[307.8,41,1.1],[231,54.2,1.1],[241,54.2,1],[251,54.2,1.1],[261,54.2,1],[271,54.2,1],[281,54.2,0.9],[291,54.2,1.1],[301,54.2,0.9],[231,137.3,0.9],[241,137.3,1],[251,137.3,0.9],[261,137.3,1],[271,137.3,1.1],[281,137.3,1.1],[291,137.3,1],[301,137.3,1.1],[224.2,61,1.2],[224.2,71,1.1],[224.2,81,1.2],[224.2,91,1.1],[224.2,101,0.9],[224.2,111,0.9],[224.2,121,0.9],[307.8,61,1],[307.8,71,1.1],[307.8,81,1.1],[307.8,91,1.1],[307.8,101,1.1],[307.8,111,1.2],[307.8,121,0.9],[231,144.7,0.9],[241,144.7,1.1],[251,144.7,0.9],[261,144.7,1],[271,144.7,0.9],[281,144.7,0.9],[291,144.7,0.9],[301,144.7,1.2],[231,239.8,0.9],[241,239.8,1],[251,239.8,1.1],[261,239.8,1],[271,239.8,1.2],[281,239.8,1.1],[291,239.8,1.1],[301,239.8,1.1],[224.2,152,1.1],[224.2,162,0.9],[224.2,172,1.2],[224.2,182,1.1],[224.2,192,1.1],[224.2,202,1],[224.2,212,1.1],[224.2,222,1],[224.2,232,1.1],[307.8,152,1.2],[307.8,162,1],[307.8,172,1.1],[307.8,182,1],[307.8,192,1.1],[307.8,202,0.9],[307.8,212,1],[307.8,222,0.9],[307.8,232,1],[-86.8,123.1,1],[-147.4,130.4,1.1],[-90,63.9,0.9],[-114,130.9,1.3],[-97.5,122.4,1.3],[-144.4,78.4,1.4],[-140.1,70.2,1],[-106.9,108.3,1],[-134,108.4,1.4],[-89.8,107.3,1.3],[-89.8,102.3,1],[-153.3,119.2,1.1],[-114.2,82.4,1],[-151.6,88.5,1.4],[-98.4,129.5,1],[-159.7,96.9,1],[-142.9,123,1.1],[-161.8,111.6,1.6],[-124.2,68.8,1],[-153.9,71.3,0.9],[-92.7,93.6,0.9],[-148.5,62.9,1.3],[-149.5,95.9,1.3],[-136.1,124.9,1.2],[-138.1,88.2,1.4],[-150.1,71.8,1.3],[-92,91.3,1.3],[-125,122.4,1.6],[-95.6,108.8,0.9],[-136.2,78.9,1.4],[-110.3,73.3,0.9],[-93.4,77.1,1.5],[-114.4,89,1.1],[-134.5,72.4,1.3],[-144,59.5,1.4],[-160.8,61.4,1.2],[-154.2,81.3,1.3],[-104.4,69.3,1],[-121.6,111.9,1.4],[-84.1,74.8,1.3],[-120.1,61.6,1.3],[-106.7,66.8,1.1],[-153.6,70.8,1.5],[-100.1,107.9,1.6],[-138.1,92.5,0.9],[-146.7,117.9,1.4],[-151.1,119.4,1.6],[-84.2,131,1],[-90.4,113.2,1.2],[-161.7,63.8,1.4],[-89.3,61.5,1],[-114.6,79.5,1.3],[-124.5,106.6,1.3],[-153.8,115,1.3],[-122.2,111.9,1.5],[-86.1,128.9,1.5],[-141.4,94.4,1.3],[-111.2,130.2,1.5],[-109.9,107.8,1.1],[-123.9,116.6,1.4],[-104.6,102,1.4],[-87.8,127.9,1.1],[-141.5,85.1,1.6],[-149,108.8,1.4],[-85.2,82.4,1.2],[-86.1,114.3,1],[-98.6,88.1,1.5],[-87.2,68.5,1.3],[-83.3,110.9,0.9],[-135.5,61.9,0.9],[-142.3,107.6,1.4],[-151,111.4,1.4],[-107.9,124.4,1.1],[-84.9,102.6,1.6],[-82.6,80.5,1.2],[-145,101.2,1.1],[-141.3,103,1.4],[-86.8,127.2,1.2],[-122.8,59.1,1.2],[-151.5,111.6,1],[-130.8,99.8,1],[-120.2,88.3,1.4],[-114.2,106.5,1.3],[-82.8,102.4,1.6],[-85.4,84.5,1.2],[-89.5,90,1],[-93.3,84.8,1.1],[-118.1,66,1],[-124.9,77.8,1],[-113.4,122.9,1.2],[-101.5,92.7,1.1],[-91.5,126.1,1],[-139,98.2,1],[-145.1,83,1.1],[-124.3,69.9,0.9],[-117.5,65.2,1.1],[-158,126.4,1.5],[-113.9,97,1.4],[-90.8,109,1.3],[-118.8,89,0.9],[-151.9,127,1.1],[-97.3,112.3,1.4],[-145.8,65.5,1.2],[-126.6,94.8,1],[-126.9,64.7,1],[-114.7,95.9,1.6],[-89.8,126.3,1.1],[-108.8,111,1.4],[-127.1,124.5,1.1],[-105,117.8,1.5],[-138.6,77,1.2],[-115.7,124.5,1.3],[-135.5,101.8,1.3],[-130.6,59.1,1.2],[-145.8,78.3,1.1],[-115.2,79.5,1.3],[-82,102.3,1.5],[-158.8,82.2,1.4],[-140,76.9,1.4],[-132.6,59.4,1.1],[-121,71.8,1.4],[-137.5,117.7,1.1],[-100.9,89,1.4],[-129.2,108.3,1.1],[-109.8,61.8,1.2],[-125.6,70.8,1.2],[-95.4,103.8,1.4],[-135.1,104.7,1.4],[-94.5,127.5,1],[-118.5,112.4,1.2],[-103.7,85.8,1.6],[-117.6,61.1,1.1],[-112.2,130.5,1.2],[-150.9,119,1.2],[-136.9,89.6,1.3],[-107,125,1.3],[-136.5,61.2,1.1],[-151.7,121.9,1.1],[-97.5,86.2,0.9],[-96.1,117,1.5],[-215.5,-187.3,1],[-217.8,-194.7,1.1],[-209.9,-219.1,1.1],[-256,-4.3,0.9],[-255.1,11.6,1.1],[-258.8,-9.4,0.9],[-254.7,-6.6,1.2],[-156.1,-222.6,0.9],[-151.8,-219.5,1],[-145.9,-207.2,1.2],[-151.1,-219.4,1],[11.1,127.5,1.1],[15.6,115.8,0.9],[14.6,158.8,0.9],[14.6,149.9,0.8],[90.4,-188.4,1.1],[98,-218.9,1.2],[98.1,-208.6,1],[96,-208.5,1.2],[81.9,-186.5,1.1],[108.1,-198.7,1.1],[104.3,-142,0.8],[109.6,-174.9,0.9],[107.7,42.3,0.9],[101.4,3.5,1],[100.4,-5.4,1.1],[101.1,4.6,1.1],[137.5,-175.5,1],[148.4,-174.7,1.1],[150.5,-146.1,1],[130.4,-142.4,0.9],[190.1,-100.6,0.9],[191.6,-92.8,0.9],[193.9,-91.6,0.9],[186.1,-85.6,1.1],[190.5,-94.7,0.9],[211.6,-44.4,1],[210.3,-69.3,1],[204.9,-59.9,0.9],[181.8,58,1.1],[183.1,82.6,0.8],[182.8,59.5,0.9],[143.5,128.7,0.9],[142.5,131.7,1],[148.7,111.1,0.8],[131.9,129.8,1],[169.4,100.5,1],[166.7,116.2,1.1],[155.8,113,1.1],[245.7,-99.4,1.2],[228.6,-108.8,0.9],[230.5,-121.8,0.9],[236.7,-95,1],[230,-95.9,1],[243,-118.9,1.2],[298.4,214.1,1.2],[283.7,208.5,1.2],[299.3,215.3,1.1],[289.1,217.2,1.1],[280.3,204,1.1]],"markings":[{"e0":-267,"e1":-176,"n0":-231,"n1":-231,"color":"white","dashed":true},{"e0":-166,"e1":-76,"n0":-231,"n1":-231,"color":"white","dashed":true},{"e0":-66,"e1":21,"n0":-231,"n1":-231,"color":"white","dashed":true},{"e0":29,"e1":113,"n0":-231,"n1":-231,"color":"white","dashed":true},{"e0":125,"e1":217,"n0":-231,"n1":-231,"color":"white","dashed":true},{"e0":225,"e1":307,"n0":-231,"n1":-231,"color":"white","dashed":true},{"e0":-267,"e1":-176,"n0":-133,"n1":-133,"color":"yellow","dashed":false},{"e0":-166,"e1":-76,"n0":-133,"n1":-133,"color":"yellow","dashed":false},{"e0":-66,"e1":21,"n0":-133,"n1":-133,"color":"yellow","dashed":false},{"e0":29,"e1":113,"n0":-133,"n1":-133,"color":"yellow","dashed":false},{"e0":125,"e1":217,"n0":-133,"n1":-133,"color":"yellow","dashed":false},{"e0":225,"e1":307,"n0":-133,"n1":-133,"color":"yellow","dashed":false},{"e0":-267,"e1":-176,"n0":-21,"n1":-21,"color":"yellow","dashed":false},{"e0":-166,"e1":-76,"n0":-21,"n1":-21,"color":"yellow","dashed":false},{"e0":-66,"e1":21,"n0":-21,"n1":-21,"color":"yellow","dashed":false},{"e0":29,"e1":113,"n0":-21,"n1":-21,"color":"yellow","dashed":false},{"e0":125,"e1":217,"n0":-21,"n1":-21,"color":"yellow","dashed":false},{"e0":225,"e1":307,"n0":-21,"n1":-21,"color":"yellow","dashed":false},{"e0":-267,"e1":-176,"n0":51,"n1":51,"color":"white","dashed":true},{"e0":-166,"e1":-76,"n0":51,"n1":51,"color":"white","dashed":true},{"e0":-66,"e1":21,"n0":51,"n1":51,"color":"white","dashed":true},{"e0":29,"e1":113,"n0":51,"n1":51,"color":"white","dashed":true},{"e0":125,"e1":217,"n0":51,"n1":51,"color":"white","dashed":true},{"e0":225,"e1":307,"n0":51,"n1":51,"color":"white","dashed":true},{"e0":-267,"e1":-176,"n0":141,"n1":141,"color":"yellow","dashed":false},{"e0":-166,"e1":-76,"n0":141,"n1":141,"color":"yellow","dashed":false},{"e0":-66,"e1":21,"n0":141,"n1":141,"color":"yellow","dashed":false},{"e0":29,"e1":113,"n0":141,"n1":141,"color":"yellow","dashed":false},{"e0":125,"e1":217,"n0":141,"n1":141,"color":"yellow","dashed":false},{"e0":225,"e1":307,"n0":141,"n1":141,"color":"yellow","dashed":false},{"e0":-267,"e1":-176,"n0":243,"n1":243,"color":"white","dashed":true},{"e0":-166,"e1":-76,"n0":243,"n1":243,"color":"white","dashed":true},{"e0":-66,"e1":21,"n0":243,"n1":243,"color":"white","dashed":true},{"e0":29,"e1":113,"n0":243,"n1":243,"color":"white","dashed":true},{"e0":125,"e1":217,"n0":243,"n1":243,"color":"white","dashed":true},{"e0":225,"e1":307,"n0":243,"n1":243,"color":"white","dashed":true},{"e0":-271,"e1":-271,"n0":-227,"n1":-138,"color":"white","dashed":true},{"e0":-271,"e1":-271,"n0":-128,"n1":-27,"color":"white","dashed":true},{"e0":-271,"e1":-271,"n0":-15,"n1":47,"color":"white","dashed":true},{"e0":-271,"e1":-271,"n0":55,"n1":136,"color":"white","dashed":true},{"e0":-271,"e1":-271,"n0":146,"n1":239,"color":"white","dashed":true},{"e0":-171,"e1":-171,"n0":-227,"n1":-138,"color":"yellow","dashed":false},{"e0":-171,"e1":-171,"n0":-128,"n1":-27,"color":"yellow","dashed":false},{"e0":-171,"e1":-171,"n0":-15,"n1":47,"color":"yellow","dashed":false},{"e0":-171,"e1":-171,"n0":55,"n1":136,"color":"yellow","dashed":false},{"e0":-171,"e1":-171,"n0":146,"n1":239,"color":"yellow","dashed":false},{"e0":-71,"e1":-71,"n0":-227,"n1":-138,"color":"yellow","dashed":false},{"e0":-71,"e1":-71,"n0":-128,"n1":-27,"color":"yellow","dashed":false},{"e0":-71,"e1":-71,"n0":-15,"n1":47,"color":"yellow","dashed":false},{"e0":-71,"e1":-71,"n0":55,"n1":136,"color":"yellow","dashed":false},{"e0":-71,"e1":-71,"n0":146,"n1":239,"color":"yellow","dashed":false},{"e0":25,"e1":25,"n0":-227,"n1":-138,"color":"white","dashed":true},{"e0":25,"e1":25,"n0":-128,"n1":-27,"color":"white","dashed":true},{"e0":25,"e1":25,"n0":-15,"n1":47,"color":"white","dashed":true},{"e0":25,"e1":25,"n0":55,"n1":136,"color":"white","dashed":true},{"e0":25,"e1":25,"n0":146,"n1":239,"color":"white","dashed":true},{"e0":119,"e1":119,"n0":-227,"n1":-138,"color":"yellow","dashed":false},{"e0":119,"e1":119,"n0":-128,"n1":-27,"color":"yellow","dashed":false},{"e0":119,"e1":119,"n0":-15,"n1":47,"color":"yellow","dashed":false},{"e0":119,"e1":119,"n0":55,"n1":136,"color":"yellow","dashed":false},{"e0":119,"e1":119,"n0":146,"n1":239,"color":"yellow","dashed":false},{"e0":221,"e1":221,"n0":-227,"n1":-138,"color":"white","dashed":true},{"e0":221,"e1":221,"n0":-128,"n1":-27,"color":"white","dashed":true},{"e0":221,"e1":221,"n0":-15,"n1":47,"color":"white","dashed":true},{"e0":221,"e1":221,"n0":55,"n1":136,"color":"white","dashed":true},{"e0":221,"e1":221,"n0":146,"n1":239,"color":"white","dashed":true},{"e0":311,"e1":311,"n0":-227,"n1":-138,"color":"white","dashed":true},{"e0":311,"e1":311,"n0":-128,"n1":-27,"color":"white","dashed":true},{"e0":311,"e1":311,"n0":-15,"n1":47,"color":"white","dashed":true},{"e0":311,"e1":311,"n0":55,"n1":136,"color":"white","dashed":true},{"e0":311,"e1":311,"n0":146,"n1":239,"color":"white","dashed":true}]};
+
+// ---- shared/scene-core.js ----
+// Engine-agnostic scene core shared by the Babylon.js and PlayCanvas pages.
+// Everything here is pure data + math: the two pages only turn these buffers into meshes.
+//
+// World coords (data): e = east (m), n = north (m), y = up (m). Origin = study site centre.
+// Engine coords (returned geometry): right-handed, Y-up, x = e, y = y, z = -n (north = -Z).
+// Triangles are counter-clockwise when seen from the side their normal points to (glTF/OpenGL).
+const SITE_CORE = (function () {
+    'use strict';
+    const D = SITE_DATA;
+
+    // ---------- helpers ----------
+    const toEngine = (e, n, y) => [e, y || 0, -n];
+
+    function polygonArea(poly) {
+        let a = 0;
+        for (let i = 0; i < poly.length; i++) {
+            const [x0, y0] = poly[i], [x1, y1] = poly[(i + 1) % poly.length];
+            a += x0 * y1 - x1 * y0;
+        }
+        return Math.abs(a) / 2;
+    }
+
+    function emptyGeom() { return { positions: [], normals: [], indices: [], colors: null }; }
+
+    function pushTri(g, a, b, c, nrm, col) {
+        const base = g.positions.length / 3;
+        g.positions.push(...a, ...b, ...c);
+        g.normals.push(...nrm, ...nrm, ...nrm);
+        if (col) { g.colors = g.colors || []; g.colors.push(...col, ...col, ...col); }
+        g.indices.push(base, base + 1, base + 2);
+    }
+
+    function faceNormal(a, b, c) {
+        const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+        const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+        const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        const l = Math.hypot(nx, ny, nz) || 1;
+        return [nx / l, ny / l, nz / l];
+    }
+
+    function tri(g, a, b, c, col) { pushTri(g, a, b, c, faceNormal(a, b, c), col); }
+
+    // Extrude a convex CCW (e, n) polygon between heights y0 and y1. Flat-shaded.
+    function extrude(poly, y0, y1, g, opts) {
+        g = g || emptyGeom();
+        const o = opts || {};
+        const col = o.color || null;
+        const bot = poly.map(([e, n]) => toEngine(e, n, y0));
+        const top = poly.map(([e, n]) => toEngine(e, n, y1));
+        for (let i = 1; i < poly.length - 1; i++) {
+            tri(g, top[0], top[i], top[i + 1], col);
+            if (!o.noBottom) tri(g, bot[0], bot[i + 1], bot[i], col);
+        }
+        for (let i = 0; i < poly.length; i++) {
+            const j = (i + 1) % poly.length;
+            tri(g, bot[i], bot[j], top[j], col);
+            tri(g, bot[i], top[j], top[i], col);
+        }
+        return g;
+    }
+
+    const rectPoly = (e0, e1, n0, n1) => [[e0, n0], [e1, n0], [e1, n1], [e0, n1]];
+
+    function box(e0, e1, n0, n1, y0, y1, g, opts) {
+        return extrude(rectPoly(e0, e1, n0, n1), y0, y1, g, opts);
+    }
+
+    // Flat horizontal quad (faces up)
+    function quad(e0, e1, n0, n1, y, g, col) {
+        g = g || emptyGeom();
+        const a = toEngine(e0, n0, y), b = toEngine(e1, n0, y), c = toEngine(e1, n1, y), d = toEngine(e0, n1, y);
+        tri(g, a, b, c, col); tri(g, a, c, d, col);
+        return g;
+    }
+
+    // Offset a convex CCW polygon outward by d metres (used for slab edges).
+    function offsetPolygon(poly, d) {
+        const n = poly.length, lines = [];
+        for (let i = 0; i < n; i++) {
+            const [x0, y0] = poly[i], [x1, y1] = poly[(i + 1) % n];
+            const len = Math.hypot(x1 - x0, y1 - y0);
+            const nx = (y1 - y0) / len, ny = -(x1 - x0) / len; // outward for CCW
+            lines.push([x0 + nx * d, y0 + ny * d, x1 - x0, y1 - y0]);
+        }
+        const out = [];
+        for (let i = 0; i < n; i++) {
+            const A = lines[(i - 1 + n) % n], B = lines[i];
+            const den = A[2] * B[3] - A[3] * B[2];
+            const t = ((B[0] - A[0]) * B[3] - (B[1] - A[1]) * B[2]) / den;
+            out.push([A[0] + A[2] * t, A[1] + A[3] * t]);
+        }
+        return out;
+    }
+
+    // ---------- terrain ----------
+    const C = D.city;
+    function terrainHeight(e, n) {
+        const dx = Math.max(C.eMin - 40 - e, 0, e - (C.eMax + 40));
+        const dz = Math.max(C.nMin - 40 - n, 0, n - (C.nMax + 40));
+        const d = Math.hypot(dx, dz);
+        if (d <= 0) return 0;
+        const r = Math.min(1, d / 450), k = r * r * (3 - 2 * r);
+        const north = 1 + 0.9 * Math.max(0, Math.min(1, n / 900));
+        const base = 30 + 22 * Math.sin(e * 0.0105 + 1.3) * Math.cos(n * 0.0092 - 0.7)
+            + 11 * Math.sin(e * 0.023 + n * 0.017 + 2.1) + 5 * Math.sin(e * 0.051 - n * 0.043 + 0.4);
+        return Math.max(0, k * base * north);
+    }
+
+    // Smooth-shaded height grid with vertex colours (flat ground -> greener, darker hills).
+    function terrainGeometry() {
+        const half = 1100, step = 25, cx = 20, cn = 6, N = Math.round((2 * half) / step);
+        const g = { positions: [], normals: [], indices: [], colors: [] };
+        const h = (e, n) => terrainHeight(e, n);
+        for (let j = 0; j <= N; j++) {
+            for (let i = 0; i <= N; i++) {
+                const e = cx - half + i * step, n = cn - half + j * step;
+                const y = h(e, n) - 0.05;
+                g.positions.push(...toEngine(e, n, y));
+                const he = h(e + 1, n) - h(e - 1, n), hn = h(e, n + 1) - h(e, n - 1);
+                // normal of y = f(e, n) in engine space (x = e, z = -n)
+                const nx = -he / 2, nz = hn / 2, l = Math.hypot(nx, 1, nz);
+                g.normals.push(nx / l, 1 / l, nz / l);
+                const t = Math.min(1, y / 60);
+                g.colors.push(0.62 - 0.22 * t, 0.66 - 0.12 * t, 0.55 - 0.2 * t, 1);
+            }
+        }
+        const W = N + 1;
+        for (let j = 0; j < N; j++) {
+            for (let i = 0; i < N; i++) {
+                const a = j * W + i, b = a + 1, c = a + W, d = c + 1;
+                // grid rows go north (-z); keep CCW seen from above
+                g.indices.push(a, b, d, a, d, c);
+            }
+        }
+        return g;
+    }
+
+    // ---------- trees ----------
+    function treeGeometries() {
+        const trunks = emptyGeom(), crowns = emptyGeom();
+        const sides = 6;
+        for (const [e, n, s] of D.trees) {
+            const tr = 0.18 * s, th = 2.4 * s;
+            const ring = [];
+            for (let k = 0; k < sides; k++) {
+                const a = (k / sides) * Math.PI * 2;
+                ring.push([e + Math.cos(a) * tr, n + Math.sin(a) * tr]);
+            }
+            extrude(ring, 0.15, 0.15 + th, trunks, { noBottom: true });
+            // crown: 8-sided bicone
+            const cr = 1.8 * s, cy = 0.15 + th + 1.5 * s, hh = 2.0 * s;
+            const topP = toEngine(e, n, cy + hh), botP = toEngine(e, n, cy - hh * 0.8);
+            const pts = [];
+            for (let k = 0; k < 8; k++) {
+                const a = (k / 8) * Math.PI * 2 + (e * 0.37 + n * 0.11);
+                pts.push(toEngine(e + Math.cos(a) * cr, n + Math.sin(a) * cr, cy));
+            }
+            for (let k = 0; k < 8; k++) {
+                const p = pts[k], q = pts[(k + 1) % 8];
+                tri(crowns, p, q, topP);
+                tri(crowns, q, p, botP);
+            }
+        }
+        return { trunks, crowns };
+    }
+
+    // ---------- context (everything except the planned building) ----------
+    function buildContext() {
+        const PLAT = 0.15;
+        const asphalt = quad(C.eMin, C.eMax, C.nMin, C.nMax, 0.01);
+        const platforms = emptyGeom();
+        for (const b of D.blocks) {
+            box(b.e0 - b.pad.w, b.e1 + b.pad.e, b.n0 - b.pad.s, b.n1 + b.pad.n, 0, PLAT, platforms, { noBottom: true });
+        }
+        const parks = emptyGeom();
+        for (const b of D.blocks) if (b.kind === 'park') quad(b.e0, b.e1, b.n0, b.n1, PLAT + 0.01, parks);
+
+        const buildings = emptyGeom();
+        for (const b of D.buildings) for (const p of b.parts) box(p.e0, p.e1, p.n0, p.n1, p.y0 + PLAT, p.y1 + PLAT, buildings, { noBottom: true });
+
+        const markingsYellow = emptyGeom(), markingsWhite = emptyGeom();
+        for (const m of D.markings) {
+            const g = m.color === 'yellow' ? markingsYellow : markingsWhite;
+            const horizontal = m.n0 === m.n1;
+            const a0 = horizontal ? m.e0 : m.n0, a1 = horizontal ? m.e1 : m.n1;
+            const seg = m.dashed ? 3 : a1 - a0, gap = m.dashed ? 3 : 0;
+            for (let a = a0 + 1; a < a1 - 1; a += seg + gap) {
+                const b = Math.min(a + seg, a1 - 1);
+                if (horizontal) quad(a, b, m.n0 - 0.08, m.n0 + 0.08, 0.03, g);
+                else quad(m.e0 - 0.08, m.e0 + 0.08, a, b, 0.03, g);
+            }
+        }
+
+        // Parcel boundaries as line segments [x0,y0,z0,x1,y1,z1] in engine space
+        const parcelLines = [];
+        const Y = PLAT + 0.03;
+        for (const p of D.parcels) {
+            const r = rectPoly(p.e0, p.e1, p.n0, p.n1);
+            for (let i = 0; i < 4; i++) {
+                const [a, b] = [r[i], r[(i + 1) % 4]];
+                parcelLines.push([...toEngine(a[0], a[1], Y), ...toEngine(b[0], b[1], Y)]);
+            }
+        }
+
+        const sitePoly = D.site.polygon;
+        const siteFill = emptyGeom();
+        for (let i = 1; i < sitePoly.length - 1; i++) {
+            tri(siteFill, toEngine(sitePoly[0][0], sitePoly[0][1], PLAT + 0.02),
+                toEngine(sitePoly[i][0], sitePoly[i][1], PLAT + 0.02), toEngine(sitePoly[i + 1][0], sitePoly[i + 1][1], PLAT + 0.02));
+        }
+        // Closed outline as a list of points (first point repeated at the end)
+        const siteOutline = sitePoly.concat([sitePoly[0]]).map(([e, n]) => toEngine(e, n, PLAT + 0.06));
+
+        const { trunks, crowns } = treeGeometries();
+        return { asphalt, platforms, parks, buildings, markingsYellow, markingsWhite, parcelLines, siteFill, siteOutline, trunks, crowns, terrain: terrainGeometry(), platformHeight: PLAT };
+    }
+
+    // ---------- planned building (parametric mass) ----------
+    const PODIUM_POLY = [[-18.5, -12.5], [13.5, -12.5], [17.5, -8.5], [17.5, 9.5], [-18.5, 9.5]];
+    const TOWER_POLY = [[-14, -6], [10, -6], [10, 9.5], [-14, 9.5]];
+    const ROOFTOP_POLY = [[-6, 2], [2, 2], [2, 8], [-6, 8]];
+    const MASS_DEFAULTS = { podiumFloors: 3, towerFloors: 12, podiumFH: 4.2, towerFH: 3.9 };
+    const MASS_LIMITS = {
+        podiumFloors: { min: 1, max: 5, step: 1 },
+        towerFloors: { min: 0, max: 30, step: 1 },
+        podiumFH: { min: 3.6, max: 5.4, step: 0.1 },
+        towerFH: { min: 3.3, max: 4.5, step: 0.1 },
+    };
+    const SLAB = 0.35;
+
+    function buildMainMass(params) {
+        const p = Object.assign({}, MASS_DEFAULTS, params || {});
+        const base = 0.15; // sits on the block platform
+        const floors = [];
+        let y = 0, level = 1;
+        const add = (poly, fh, kind, use) => {
+            const y0 = base + y, y1 = y0 + fh;
+            floors.push({
+                level, label: level + 'F', kind, use,
+                footprint: poly, area: polygonArea(poly),
+                y0, y1, floorLevel: y, height: fh,
+                slab: extrude(offsetPolygon(poly, 0.12), y0, y0 + SLAB),
+                body: extrude(poly, y0 + SLAB, y1, null, { noBottom: true }),
+            });
+            y += fh; level++;
+        };
+        for (let i = 0; i < p.podiumFloors; i++) add(PODIUM_POLY, p.podiumFH, 'podium', '근린생활시설');
+        for (let i = 0; i < p.towerFloors; i++) add(TOWER_POLY, p.towerFH, 'tower', '업무시설');
+        const topPoly = floors.length ? floors[floors.length - 1].footprint : PODIUM_POLY;
+        const roofSlab = extrude(offsetPolygon(topPoly, 0.12), base + y, base + y + 0.6);
+        const rooftop = extrude(ROOFTOP_POLY, base + y + 0.6, base + y + 4.5, null, { noBottom: true });
+
+        const siteArea = polygonArea(D.site.polygon);
+        const buildingArea = Math.max(...floors.map((f) => f.area));
+        const gfa = floors.reduce((s, f) => s + f.area, 0);
+        return {
+            params: p, floors, roofSlab, rooftop,
+            metrics: {
+                siteArea, buildingArea, gfa,
+                bcr: (buildingArea / siteArea) * 100,
+                far: (gfa / siteArea) * 100,
+                height: y, // ground floor level to roof slab, rooftop structure excluded
+                floorsAbove: floors.length,
+            },
+        };
+    }
+
+    // ---------- sun (NOAA general solar position, ~0.5 deg accuracy) ----------
+    const SUN_PRESETS = {
+        winter: { month: 12, day: 22, label: '동지' },
+        equinox: { month: 3, day: 20, label: '춘·추분' },
+        summer: { month: 6, day: 21, label: '하지' },
+    };
+
+    function dayOfYear(year, month, day) {
+        const md = [31, (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0 ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        let n = day;
+        for (let i = 0; i < month - 1; i++) n += md[i];
+        return n;
+    }
+
+    // hour = local clock time in decimal hours (KST by default)
+    function solarPosition(opts) {
+        const loc = D.site.location;
+        const year = opts.year || 2026, lat = (opts.lat ?? loc.lat) * Math.PI / 180;
+        const lon = opts.lon ?? loc.lon, tz = opts.tz ?? loc.tz;
+        const N = dayOfYear(year, opts.month, opts.day);
+        const g = (2 * Math.PI / 365) * (N - 1 + (opts.hour - tz - 12) / 24);
+        const eqt = 229.18 * (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g) - 0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g));
+        const decl = 0.006918 - 0.399912 * Math.cos(g) + 0.070257 * Math.sin(g) - 0.006758 * Math.cos(2 * g)
+            + 0.000907 * Math.sin(2 * g) - 0.002697 * Math.cos(3 * g) + 0.00148 * Math.sin(3 * g);
+        const tst = opts.hour * 60 + eqt + 4 * lon - 60 * tz;
+        const ha = (tst / 4 - 180) * Math.PI / 180;
+        const cosZ = Math.sin(lat) * Math.sin(decl) + Math.cos(lat) * Math.cos(decl) * Math.cos(ha);
+        const zen = Math.acos(Math.max(-1, Math.min(1, cosZ)));
+        const az = Math.atan2(Math.sin(ha), Math.cos(ha) * Math.sin(lat) - Math.tan(decl) * Math.cos(lat)) + Math.PI;
+        return { altitude: 90 - zen * 180 / Math.PI, azimuth: ((az * 180 / Math.PI) % 360 + 360) % 360, declination: decl * 180 / Math.PI };
+    }
+
+    // Unit vector pointing from the ground TOWARD the sun, engine space.
+    function sunVector(altitudeDeg, azimuthDeg) {
+        const a = altitudeDeg * Math.PI / 180, z = azimuthDeg * Math.PI / 180;
+        const e = Math.sin(z) * Math.cos(a), n = Math.cos(z) * Math.cos(a), u = Math.sin(a);
+        return toEngine(e, n, u);
+    }
+
+    // Ray (engine space) vs the planned building's floors. Convex prism clipping (Cyrus-Beck).
+    // Returns { level, distance, point } of the nearest floor hit, or null.
+    function pickFloor(origin, dir, mass) {
+        let best = null;
+        // engine -> world: e = x, n = -z, y = y
+        const oe = origin[0], on = -origin[2], oy = origin[1];
+        const de = dir[0], dn = -dir[2], dy = dir[1];
+        for (const f of mass.floors) {
+            let t0 = 0, t1 = Infinity;
+            const planes = [];
+            const poly = f.footprint;
+            for (let i = 0; i < poly.length; i++) {
+                const [x0, y0] = poly[i], [x1, y1] = poly[(i + 1) % poly.length];
+                const nx = y1 - y0, ny = -(x1 - x0); // outward for CCW
+                planes.push([nx, 0, ny, -(nx * x0 + ny * y0)]);
+            }
+            planes.push([0, 1, 0, -f.y1], [0, -1, 0, f.y0]);
+            let ok = true;
+            for (const [a, b, c, d] of planes) {
+                const num = -(a * oe + b * oy + c * on + d), den = a * de + b * dy + c * dn;
+                if (Math.abs(den) < 1e-12) { if (num < 0) { ok = false; break; } continue; }
+                const t = num / den;
+                if (den < 0) t0 = Math.max(t0, t); else t1 = Math.min(t1, t);
+                if (t0 > t1) { ok = false; break; }
+            }
+            if (ok && (!best || t0 < best.distance)) {
+                best = { level: f.level, distance: t0, point: [origin[0] + dir[0] * t0, origin[1] + dir[1] * t0, origin[2] + dir[2] * t0] };
+            }
+        }
+        return best;
+    }
+
+    function fmt(v, digits) {
+        return v.toLocaleString('ko-KR', { minimumFractionDigits: digits ?? 2, maximumFractionDigits: digits ?? 2 });
+    }
+
+    return {
+        data: D, toEngine, polygonArea, extrude, box, quad, offsetPolygon,
+        terrainHeight, buildContext, buildMainMass, MASS_DEFAULTS, MASS_LIMITS,
+        SUN_PRESETS, solarPosition, sunVector, pickFloor, fmt,
+    };
+})();
+
+// ---- shared/ui-controller.js ----
+// UI shell controller, engine-agnostic: panel controls <-> SITE_CORE <-> renderer adapter.
+// Adapter contract and test API: docs/SPEC.md. Entry point: startApp(createAdapter).
+var __APP_T0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+
+function startApp(createAdapter) {
+    'use strict';
+    const $ = (id) => document.getElementById(id);
+    const now = () => performance.now();
+    const HOUR_MIN = 6, HOUR_MAX = 19;
+    const PLAY_RATE = 1.2;           // simulated hours per real second (06:00 -> 19:00 in ~11 s)
+    const CLICK_SLOP = 5, CLICK_MS = 400;
+    const VIEWS = ['aerial', 'pedestrian', 'top', 'north'];
+    const LAYERS = ['context', 'trees', 'shadows', 'terrain'];
+    const DIRS = ['북', '북북동', '북동', '동북동', '동', '동남동', '남동', '남남동', '남', '남남서', '남서', '서남서', '서', '서북서', '북서', '북북서'];
+
+    let core = null, adapter = null, canvas = null;
+    const S = {
+        params: null, mass: null,
+        preset: 'winter', hour: 12.5, sun: null,
+        view: 'aerial', layers: { context: true, trees: true, shadows: true, terrain: true },
+        selected: null, playing: false, playRaf: 0,
+        loadMs: null, ready: false,
+    };
+    window.__app = { ready: false };
+
+    // ---------- small helpers ----------
+    const setText = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+    function hhmm(hour) {
+        const m = Math.floor(hour * 60 + 1e-6);
+        return pad2(Math.floor(m / 60)) + ':' + pad2(m % 60);
+    }
+    function snap(key, v) {
+        const L = core.MASS_LIMITS[key];
+        const s = Math.round((clamp(Number(v), L.min, L.max) - L.min) / L.step) * L.step + L.min;
+        return Number(s.toFixed(2));
+    }
+    function dirName(az) { return DIRS[Math.round((((az % 360) + 360) % 360) / 22.5) % 16]; }
+    function guard(fn) {
+        return function (ev) {
+            try { return fn.call(this, ev); } catch (err) { console.error('[ui]', err); }
+        };
+    }
+    function setFill(input) {
+        const min = Number(input.min), max = Number(input.max), v = Number(input.value);
+        const p = max > min ? (v - min) / (max - min) : 0;
+        input.style.setProperty('--fill', (p * 100).toFixed(2) + '%');
+    }
+
+    // ---------- error / loading ----------
+    function hasWebGL() {
+        try {
+            const c = document.createElement('canvas');
+            const gl = c.getContext('webgl2') || c.getContext('webgl');
+            if (!gl) return false;
+            const lose = gl.getExtension('WEBGL_lose_context');
+            if (lose) lose.loseContext();
+            return true;
+        } catch (e) { return false; }
+    }
+    function describe(err) {
+        const msg = (err && (err.message || String(err))) || '알 수 없는 오류';
+        if (err && err.name === 'ReferenceError' && /\b(BABYLON|pc|SITE_CORE|SITE_DATA)\b/.test(msg)) {
+            return '엔진 스크립트가 로드되지 않았습니다 (' + msg + '). 네트워크에서 CDN에 접근할 수 있는지 확인하세요.';
+        }
+        if (/webgl|context/i.test(msg) || !hasWebGL()) {
+            return 'WebGL을 시작하지 못했습니다 (' + msg + '). 브라우저의 하드웨어 가속을 켜 주세요.';
+        }
+        return msg;
+    }
+    function fail(err) {
+        console.error('[startApp]', err);
+        stopPlay();
+        const reason = describe(err);
+        const box = $('error'), splash = $('splash');
+        if ($('error-reason')) $('error-reason').textContent = reason;
+        if (box) box.hidden = false;
+        if (splash) splash.hidden = true;
+        window.__app = { ready: false, error: reason };
+    }
+
+    // ---------- mass ----------
+    function renderMassControls() {
+        for (const key of Object.keys(core.MASS_LIMITS)) {
+            const el = $('in-' + key);
+            if (!el) continue;
+            const v = S.params[key];
+            if (Number(el.value) !== v) el.value = String(v);
+            setFill(el);
+            const isFloors = /Floors$/.test(key);
+            const text = isFloors ? v + '층' : core.fmt(v, 1) + ' m';
+            setText('out-' + key, text);
+            el.setAttribute('aria-valuetext', isFloors ? v + '개 층' : core.fmt(v, 1) + '미터');
+        }
+    }
+    function renderMetrics() {
+        const m = S.mass.metrics, F = S.mass.floors;
+        setText('m-siteArea', core.fmt(m.siteArea, 2));
+        setText('m-buildingArea', core.fmt(m.buildingArea, 2));
+        setText('m-gfa', core.fmt(m.gfa, 2));
+        const pod = F.filter((f) => f.kind === 'podium'), tow = F.filter((f) => f.kind === 'tower');
+        const sum = (arr) => arr.reduce((s, f) => s + f.area, 0);
+        setText('m-podN', pod.length); setText('m-podA', core.fmt(sum(pod), 2));
+        setText('m-towN', tow.length); setText('m-towA', core.fmt(sum(tow), 2));
+        setText('m-bcr', core.fmt(m.bcr, 2));
+        setText('m-far', core.fmt(m.far, 2));
+        setText('m-height', core.fmt(m.height, 2));
+        setText('m-floors', '지상 ' + m.floorsAbove);
+        setText('sum-gfa', core.fmt(m.gfa, 0));
+        setText('sum-far', core.fmt(m.far, 1));
+        setText('sum-height', core.fmt(m.height, 1));
+    }
+    function applyMass() {
+        pending.mass = false;
+        S.mass = core.buildMainMass(S.params);
+        adapter.setMass(S.mass);
+        if (S.selected != null) {
+            if (S.selected > S.mass.floors.length) clearSelection();
+            else { adapter.setHighlight(S.selected); renderFloorCard(); }
+        }
+        renderMetrics();
+        renderShadowLength();
+    }
+
+    // ---------- sun ----------
+    function renderSunControls() {
+        for (const key of Object.keys(core.SUN_PRESETS)) {
+            const r = $('sun-' + key);
+            if (r) r.checked = key === S.preset;
+        }
+        const p = core.SUN_PRESETS[S.preset];
+        setText('out-date', p.month + '월 ' + p.day + '일');
+        const el = $('in-hour');
+        const mins = Math.round(S.hour * 60);
+        if (Number(el.value) !== Math.round(mins / 10) * 10) el.value = String(Math.round(mins / 10) * 10);
+        setFill(el);
+        setText('out-hour', hhmm(S.hour));
+        const t = hhmm(S.hour).split(':');
+        el.setAttribute('aria-valuetext', p.label + ' ' + Number(t[0]) + '시 ' + Number(t[1]) + '분');
+    }
+    function renderShadowLength() {
+        const s = S.sun;
+        if (!s || !S.mass) return;
+        if (s.altitude <= 0) { setText('out-shadow', '—'); return; }
+        const len = S.mass.metrics.height / Math.tan(s.altitude * Math.PI / 180);
+        setText('out-shadow', len > 9999 ? '> 9,999 m' : core.fmt(len, 1) + ' m');
+    }
+    function renderSun() {
+        const s = S.sun, up = s.altitude > 0;
+        setText('out-alt', core.fmt(s.altitude, 1) + '°');
+        setText('out-az', core.fmt(s.azimuth, 1) + '°');
+        setText('out-az-dir', dirName(s.azimuth));
+        $('sun-state').hidden = up;
+        $('sun-read').classList.toggle('is-night', !up);
+        renderShadowLength();
+    }
+    function applySun() {
+        pending.sun = false;
+        const p = core.SUN_PRESETS[S.preset];
+        const s = core.solarPosition({ month: p.month, day: p.day, hour: S.hour });
+        S.sun = s;
+        adapter.setSun({ vector: core.sunVector(s.altitude, s.azimuth), altitude: s.altitude, azimuth: s.azimuth });
+        renderSun();
+    }
+    function startPlay() {
+        if (S.playing) return;
+        if (S.hour >= HOUR_MAX - 1e-6) S.hour = HOUR_MIN;
+        S.playing = true;
+        const btn = $('btn-play');
+        btn.setAttribute('aria-pressed', 'true');
+        setText('btn-play-text', '정지');
+        let last = now();
+        const step = (t) => {
+            if (!S.playing) return;
+            try {
+                const dt = Math.min(0.1, Math.max(0, (t - last) / 1000));
+                last = t;
+                S.hour = Math.min(HOUR_MAX, S.hour + dt * PLAY_RATE);
+                renderSunControls();
+                applySun();
+                if (S.hour >= HOUR_MAX) { stopPlay(); return; }
+            } catch (err) { console.error('[ui] play', err); stopPlay(); return; }
+            S.playRaf = requestAnimationFrame(step);
+        };
+        S.playRaf = requestAnimationFrame(step);
+    }
+    function stopPlay() {
+        if (!S.playing) return;
+        S.playing = false;
+        cancelAnimationFrame(S.playRaf);
+        const btn = $('btn-play');
+        if (btn) btn.setAttribute('aria-pressed', 'false');
+        setText('btn-play-text', '재생');
+    }
+
+    // ---------- rAF throttle for live slider drags ----------
+    const pending = { mass: false, sun: false };
+    let flushRaf = 0;
+    function schedule(kind) {
+        pending[kind] = true;
+        if (!flushRaf) flushRaf = requestAnimationFrame(flush);
+    }
+    function flush() {
+        flushRaf = 0;
+        try {
+            if (pending.mass) applyMass();
+            if (pending.sun) applySun();
+        } catch (err) { console.error('[ui]', err); }
+    }
+
+    // ---------- view / layers ----------
+    function renderViewButtons() {
+        for (const v of VIEWS) {
+            const b = $('view-' + v);
+            if (b) b.setAttribute('aria-pressed', String(S.view === v));
+        }
+    }
+    function setView(name) {
+        if (!VIEWS.includes(name)) throw new Error('알 수 없는 시점: ' + name);
+        S.view = name;
+        adapter.setView(name);
+        renderViewButtons();
+    }
+    function setLayer(name, visible) {
+        if (!LAYERS.includes(name)) throw new Error('알 수 없는 레이어: ' + name);
+        S.layers[name] = !!visible;
+        const el = $('layer-' + name);
+        if (el) el.checked = !!visible;
+        adapter.setLayer(name, !!visible);
+    }
+    function markCustomView() {
+        if (S.view == null) return;
+        S.view = null;
+        renderViewButtons();
+    }
+
+    // ---------- floor selection ----------
+    function renderFloorCard() {
+        const f = S.mass && S.mass.floors[S.selected - 1];
+        if (!f) return;
+        setText('fc-label', f.label);
+        setText('fc-use', f.use);
+        setText('fc-area', core.fmt(f.area, 2));
+        setText('fc-fl', '+' + core.fmt(f.floorLevel, 2));
+        setText('fc-fh', core.fmt(f.height, 1));
+        $('floor-card').hidden = false;
+    }
+    function select(level) {
+        if (!S.mass || level < 1 || level > S.mass.floors.length) { clearSelection(); return; }
+        S.selected = level;
+        adapter.setHighlight(level);
+        renderFloorCard();
+    }
+    function clearSelection() {
+        const had = S.selected != null;
+        S.selected = null;
+        $('floor-card').hidden = true;
+        if (had) adapter.setHighlight(null);
+    }
+    function pickAt(x, y) {
+        const r = adapter.screenToRay(x, y);
+        const hit = r && S.mass ? core.pickFloor(r.origin, r.dir, S.mass) : null;
+        if (hit) select(hit.level); else clearSelection();
+    }
+
+    // ---------- loops ----------
+    let lastHeading = NaN, lastHeadingLabel = NaN;
+    function compassFrame() {
+        let h = NaN;
+        try { h = adapter.cameraHeading(); } catch (e) { h = NaN; }
+        if (Number.isFinite(h) && !(Math.abs(h - lastHeading) < 0.05)) {
+            lastHeading = h;
+            $('compass-needle').setAttribute('transform', 'rotate(' + (-h).toFixed(2) + ')');
+            if (!(Math.abs(h - lastHeadingLabel) < 5)) {
+                lastHeadingLabel = h;
+                $('compass').setAttribute('aria-label', '방위표: 화면은 ' + dirName(h) + '쪽(' + Math.round(((h % 360) + 360) % 360) + '°)을 바라봄');
+            }
+        }
+        requestAnimationFrame(compassFrame);
+    }
+    let statsWarned = false;
+    function renderStats() {
+        let st = null;
+        try { st = adapter.stats(); } catch (err) { if (!statsWarned) { statsWarned = true; console.warn('[ui] stats', err); } }
+        const ok = (v) => typeof v === 'number' && Number.isFinite(v);
+        setText('st-fps', st && ok(st.fps) ? String(Math.round(st.fps)) : '—');
+        setText('st-draws', st && ok(st.drawCalls) ? String(Math.round(st.drawCalls)) : '—');
+    }
+
+    // Collapsed sections are a per-viewer convenience; storage may be unavailable (private mode, previews).
+    const SEC_KEY = 'mass-study.sections';
+    function restoreSections() {
+        let saved = null;
+        try { saved = JSON.parse(localStorage.getItem(SEC_KEY) || 'null'); } catch (e) { saved = null; }
+        for (const d of document.querySelectorAll('#panel-body details.sec')) {
+            if (saved && typeof saved[d.id] === 'boolean') d.open = saved[d.id];
+            d.addEventListener('toggle', () => {
+                const state = {};
+                for (const x of document.querySelectorAll('#panel-body details.sec')) state[x.id] = x.open;
+                try { localStorage.setItem(SEC_KEY, JSON.stringify(state)); } catch (e) { /* storage blocked */ }
+            });
+        }
+    }
+
+    // ---------- event wiring ----------
+    function bindControls() {
+        for (const key of Object.keys(core.MASS_LIMITS)) {
+            const el = $('in-' + key);
+            if (!el) continue;
+            const L = core.MASS_LIMITS[key];
+            el.min = String(L.min); el.max = String(L.max); el.step = String(L.step);
+            el.addEventListener('input', guard(() => {
+                S.params[key] = snap(key, el.value);
+                renderMassControls();
+                schedule('mass');
+            }));
+        }
+        $('btn-mass-reset').addEventListener('click', guard(() => {
+            S.params = Object.assign({}, core.MASS_DEFAULTS);
+            renderMassControls();
+            applyMass();
+        }));
+
+        for (const key of Object.keys(core.SUN_PRESETS)) {
+            const r = $('sun-' + key);
+            if (!r) continue;
+            const p = core.SUN_PRESETS[key];
+            setText('sun-' + key + '-date', p.month + '.' + p.day);
+            r.addEventListener('change', guard(() => {
+                if (!r.checked) return;
+                S.preset = key;
+                renderSunControls();
+                schedule('sun');
+            }));
+        }
+        const hourEl = $('in-hour');
+        hourEl.min = String(HOUR_MIN * 60); hourEl.max = String(HOUR_MAX * 60); hourEl.step = '10';
+        hourEl.addEventListener('input', guard(() => {
+            stopPlay();
+            S.hour = clamp(Number(hourEl.value) / 60, HOUR_MIN, HOUR_MAX);
+            renderSunControls();
+            schedule('sun');
+        }));
+        $('btn-play').addEventListener('click', guard(() => { if (S.playing) stopPlay(); else startPlay(); }));
+
+        for (const v of VIEWS) {
+            const b = $('view-' + v);
+            if (b) b.addEventListener('click', guard(() => setView(v)));
+        }
+        for (const name of LAYERS) {
+            const el = $('layer-' + name);
+            if (el) el.addEventListener('change', guard(() => setLayer(name, el.checked)));
+        }
+
+        $('fc-close').addEventListener('click', guard(clearSelection));
+        document.addEventListener('keydown', guard((e) => {
+            if (e.key === 'Escape' && S.selected != null) clearSelection();
+        }));
+
+        const panel = $('panel'), toggle = $('sheet-toggle');
+        toggle.addEventListener('click', guard(() => {
+            const open = panel.dataset.expanded !== 'true';
+            panel.dataset.expanded = String(open);
+            toggle.setAttribute('aria-expanded', String(open));
+            setText('sheet-toggle-text', open ? '접기' : '펼치기');
+        }));
+    }
+
+    // Click vs drag on the canvas. Window capture listeners so engine handlers cannot swallow them.
+    function bindCanvasPicking() {
+        const downs = new Map();
+        window.addEventListener('pointerdown', (e) => {
+            if (e.target !== canvas) return;
+            if (downs.size) { for (const d of downs.values()) d.multi = true; }
+            downs.set(e.pointerId, { x: e.clientX, y: e.clientY, t: now(), multi: downs.size > 0 || e.button !== 0, dragged: false });
+        }, true);
+        window.addEventListener('pointermove', (e) => {
+            const d = downs.get(e.pointerId);
+            if (d && !d.dragged && Math.hypot(e.clientX - d.x, e.clientY - d.y) >= CLICK_SLOP) {
+                d.dragged = true;
+                markCustomView();
+            }
+        }, true);
+        window.addEventListener('pointerup', guard((e) => {
+            const d = downs.get(e.pointerId);
+            if (!d) return;
+            downs.delete(e.pointerId);
+            if (d.multi || d.dragged) return;
+            if (Math.hypot(e.clientX - d.x, e.clientY - d.y) >= CLICK_SLOP || now() - d.t >= CLICK_MS) return;
+            pickAt(e.clientX, e.clientY);
+        }), true);
+        window.addEventListener('pointercancel', (e) => { downs.delete(e.pointerId); }, true);
+        canvas.addEventListener('wheel', () => markCustomView(), { passive: true });
+    }
+
+    // ---------- boot ----------
+    async function boot() {
+        if (typeof SITE_CORE === 'undefined') throw new ReferenceError('SITE_CORE is not defined');
+        core = SITE_CORE;
+        canvas = $('scene');
+        if (!canvas) throw new Error('#scene 캔버스를 찾을 수 없습니다.');
+        if (typeof createAdapter !== 'function') throw new Error('렌더러 어댑터 함수가 없습니다.');
+
+        const loc = core.data.site.location;
+        setText('tb-loc', loc.lat.toFixed(2) + '°N ' + loc.lon.toFixed(2) + '°E');
+        restoreSections();
+        S.params = Object.assign({}, core.MASS_DEFAULTS);
+        bindControls();
+        renderMassControls();
+        renderSunControls();
+
+        const slow = setTimeout(() => setText('splash-msg', '장면 생성 중… 시간이 걸리고 있습니다'), 20000);
+        adapter = await createAdapter(canvas, core);
+        if (!adapter || typeof adapter.init !== 'function') throw new Error('어댑터가 올바른 객체를 돌려주지 않았습니다.');
+        await adapter.init();
+        clearTimeout(slow);
+
+        const label = [adapter.engineName, adapter.engineVersion].filter(Boolean).join(' ') || '렌더러';
+        setText('engine-badge', label);
+        setText('st-engine', adapter.engineName || '렌더러');
+
+        applyMass();
+        applySun();
+        for (const name of LAYERS) if (!S.layers[name]) adapter.setLayer(name, false);
+        renderViewButtons();
+        bindCanvasPicking();
+
+        S.loadMs = Math.round(now() - __APP_T0);
+        setText('st-load', core.fmt(S.loadMs, 0));
+        renderStats();
+        setInterval(renderStats, 500);
+        requestAnimationFrame(compassFrame);
+        $('splash').hidden = true;
+        $('error').hidden = true; // a non-fatal early error (see ui-body guard) must not cover a working scene
+        S.ready = true;
+
+        window.__app = {
+            ready: true,
+            metrics() { return Object.assign({}, S.mass.metrics); },
+            stats() { return Object.assign({}, adapter.stats(), { loadMs: S.loadMs }); },
+            setMass(partial) {
+                for (const key of Object.keys(partial || {})) {
+                    if (key in core.MASS_LIMITS) S.params[key] = snap(key, partial[key]);
+                }
+                renderMassControls();
+                applyMass();
+                return Object.assign({}, S.mass.metrics);
+            },
+            setSun(opts) {
+                const o = opts || {};
+                if (o.preset != null) {
+                    if (!core.SUN_PRESETS[o.preset]) throw new Error('알 수 없는 기준일: ' + o.preset);
+                    S.preset = o.preset;
+                }
+                if (o.hour != null) { stopPlay(); S.hour = clamp(Number(o.hour), HOUR_MIN, HOUR_MAX); }
+                renderSunControls();
+                applySun();
+                return { altitude: S.sun.altitude, azimuth: S.sun.azimuth };
+            },
+            setView,
+            setLayer,
+            selectFloor(level) { if (level == null) clearSelection(); else select(level); return S.selected; },
+            state() {
+                return { params: Object.assign({}, S.params), preset: S.preset, hour: S.hour, view: S.view, layers: Object.assign({}, S.layers), selected: S.selected };
+            },
+        };
+    }
+
+    const run = () => boot().catch(fail);
+    if (document.readyState === 'loading') {
+        return new Promise((resolve) => document.addEventListener('DOMContentLoaded', () => resolve(run()), { once: true }));
+    }
+    return run();
+}
+
+// ---- src/adapters/mock-adapter.js ----
+// Mock renderer adapter (Canvas2D) for testing the UI shell without WebGL.
+// Draws the scene data as a plan: north is up when the heading is 0; other "views" rotate the plan so the
+// camera heading is screen-up, which exercises the 방위표. Implements the full adapter contract (docs/SPEC.md).
+async function createMockAdapter(canvas, core) {
+    'use strict';
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas2D context unavailable');
+    const D = core.data;
+    const reduceMotion = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    const COL = {
+        sky: '#cdd6dd', terrain: '#9ea88c', asphalt: '#5b5f63', platform: '#d9d6cf', park: '#9fb38a',
+        yellow: '#e2b83b', white: '#f2f2ee', parcel: '#9a968d', siteFill: '#efe6c8', boundary: '#d2352b',
+        building: '#eceae4', buildingEdge: '#a9a59c', crown: '#6f8f5a', podium: '#c98d4b', tower: '#d9a35f',
+        slab: '#5a4636', rooftop: '#b9b2a6', select: '#2f7de1',
+    };
+    // heading = azimuth the camera looks toward (deg); scale = px per metre (at 1440 px wide)
+    const VIEWS = {
+        aerial: { heading: 330, scale: 3.4, e: 0, n: 0 },
+        pedestrian: { heading: 315, scale: 9, e: 12, n: -12 },
+        top: { heading: 0, scale: 3.6, e: 0, n: 0 },
+        north: { heading: 180, scale: 4.4, e: 0, n: 0 },
+    };
+    const cam = { heading: 330, scale: 3.4, e: 0, n: 0 };
+    let tween = null;
+    const layers = { context: true, trees: true, shadows: true, terrain: true };
+    let mass = null, sun = null, highlight = null;
+    let dirty = true, raf = 0, drawOps = 0, lastDrawOps = 0;
+    let frames = 0, fps = 0, fpsT = performance.now();
+    let firstFrame = null;
+    let cssW = 0, cssH = 0, dpr = 1;
+
+    // ---------- geometry helpers ----------
+    const toRad = (d) => d * Math.PI / 180;
+    function hull(pts) {
+        const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+        const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+        const lo = [], up = [];
+        for (const q of p) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+        for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+        up.pop(); lo.pop();
+        return lo.concat(up);
+    }
+    const rect = (a) => [[a.e0, a.n0], [a.e1, a.n0], [a.e1, a.n1], [a.e0, a.n1]];
+    function polyPath(poly) {
+        ctx.moveTo(poly[0][0], poly[0][1]);
+        for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
+        ctx.closePath();
+    }
+    function fillPolys(polys, color) {
+        if (!polys.length) return;
+        ctx.beginPath();
+        for (const p of polys) polyPath(p);
+        ctx.fillStyle = color; ctx.fill(); drawOps++;
+    }
+    // shadow offset (e, n) per metre of height, or null when the sun is down
+    function shadowStep() {
+        if (!sun || sun.altitude <= 0) return null;
+        const v = sun.vector; // engine: x = e, y = up, z = -n
+        const up = Math.max(v[1], 0.02);
+        return [-v[0] / up, v[2] / up];
+    }
+
+    // ---------- view transform ----------
+    // World (e, n) -> device px: x = cx + s(c·e − sn·n), y = cy − s(sn·e + c·n); the heading points screen-up.
+    // On desktop the plan centre is shifted right so the site is not hidden behind the panel.
+    function viewParams() {
+        const h = toRad(cam.heading), s = cam.scale * Math.min(1, cssW / 1440 + 0.25) * dpr;
+        const cx0 = cssW * dpr * 0.5 + (cssW > 640 ? 180 * dpr : 0), cy0 = cssH * dpr * 0.5;
+        const c = Math.cos(h), sn = Math.sin(h);
+        return { s, c, sn, cx: cx0 - (c * cam.e - sn * cam.n) * s, cy: cy0 + (sn * cam.e + c * cam.n) * s };
+    }
+    function setTransform() {
+        const T = viewParams();
+        ctx.setTransform(T.s * T.c, -T.s * T.sn, -T.s * T.sn, -T.s * T.c, T.cx, T.cy);
+        return T;
+    }
+    function screenToWorld(px, py) {
+        const T = viewParams();
+        const x = (px * dpr - T.cx) / T.s, y = -(py * dpr - T.cy) / T.s;
+        return [T.c * x + T.sn * y, -T.sn * x + T.c * y];
+    }
+
+    // ---------- drawing ----------
+    function resize() {
+        dpr = Math.min(2, window.devicePixelRatio || 1);
+        cssW = canvas.clientWidth || window.innerWidth; cssH = canvas.clientHeight || window.innerHeight;
+        const w = Math.round(cssW * dpr), h = Math.round(cssH * dpr);
+        if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; dirty = true; }
+    }
+
+    function draw() {
+        drawOps = 0;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.fillStyle = COL.sky; ctx.fillRect(0, 0, canvas.width, canvas.height); drawOps++;
+        const T = setTransform();
+        const px = 1 / T.s; // one device pixel in metres
+        const C = D.city;
+        if (layers.terrain) fillPolys([[[C.eMin - 1200, C.nMin - 1200], [C.eMax + 1200, C.nMin - 1200], [C.eMax + 1200, C.nMax + 1200], [C.eMin - 1200, C.nMax + 1200]]], COL.terrain);
+        fillPolys([rect({ e0: C.eMin, e1: C.eMax, n0: C.nMin, n1: C.nMax })], COL.asphalt);
+        fillPolys(D.blocks.map((b) => rect({ e0: b.e0 - b.pad.w, e1: b.e1 + b.pad.e, n0: b.n0 - b.pad.s, n1: b.n1 + b.pad.n })), COL.platform);
+        fillPolys(D.blocks.filter((b) => b.kind === 'park').map(rect), COL.park);
+
+        for (const color of ['yellow', 'white']) {
+            ctx.beginPath();
+            for (const m of D.markings) if (m.color === color) { ctx.moveTo(m.e0, m.n0); ctx.lineTo(m.e1, m.n1); }
+            ctx.strokeStyle = COL[color]; ctx.lineWidth = Math.max(0.16, px); ctx.stroke(); drawOps++;
+        }
+        ctx.beginPath();
+        for (const p of D.parcels) polyPath(rect(p));
+        ctx.strokeStyle = COL.parcel; ctx.lineWidth = px; ctx.stroke(); drawOps++;
+
+        fillPolys([D.site.polygon], COL.siteFill);
+
+        // shadows: hulls of every solid's base and its sun-projected top, drawn once at fixed alpha
+        const st = shadowStep();
+        if (layers.shadows && st) {
+            const polys = [];
+            const proj = (poly, y) => poly.map(([e, n]) => [e + st[0] * y, n + st[1] * y]);
+            if (layers.context) for (const b of D.buildings) for (const p of b.parts) polys.push(hull(proj(rect(p), p.y0).concat(proj(rect(p), p.y1))));
+            if (mass) for (const f of mass.floors) polys.push(hull(proj(f.footprint, f.y0).concat(proj(f.footprint, f.y1))));
+            ctx.save();
+            ctx.globalAlpha = 0.32;
+            fillPolys(polys, '#1d2733');
+            if (layers.trees) {
+                ctx.beginPath();
+                for (const [e, n, s] of D.trees) { const y = 0.15 + 3.9 * s; const x0 = e + st[0] * y, y0 = n + st[1] * y; ctx.moveTo(x0 + 1.8 * s, y0); ctx.arc(x0, y0, 1.8 * s, 0, Math.PI * 2); }
+                ctx.fillStyle = '#1d2733'; ctx.fill(); drawOps++;
+            }
+            ctx.restore();
+        }
+
+        // site boundary
+        ctx.beginPath(); polyPath(D.site.polygon);
+        ctx.strokeStyle = COL.boundary; ctx.lineWidth = 2.5 * px; ctx.setLineDash([10 * px, 4 * px, 2 * px, 4 * px]); ctx.stroke(); ctx.setLineDash([]); drawOps++;
+
+        if (layers.context) {
+            const parts = [];
+            for (const b of D.buildings) for (const p of b.parts) parts.push(p);
+            parts.sort((a, b) => a.y1 - b.y1);
+            ctx.beginPath();
+            for (const p of parts) polyPath(rect(p));
+            ctx.fillStyle = COL.building; ctx.fill(); drawOps++;
+            ctx.strokeStyle = COL.buildingEdge; ctx.lineWidth = px; ctx.stroke(); drawOps++;
+        }
+        if (layers.trees) {
+            ctx.beginPath();
+            for (const [e, n, s] of D.trees) { ctx.moveTo(e + 1.8 * s, n); ctx.arc(e, n, 1.8 * s, 0, Math.PI * 2); }
+            ctx.fillStyle = COL.crown; ctx.fill(); drawOps++;
+        }
+
+        if (mass) {
+            for (const f of mass.floors) {
+                fillPolys([f.footprint], f.level === highlight ? COL.select : f.kind === 'podium' ? COL.podium : COL.tower);
+                ctx.beginPath(); polyPath(f.footprint); ctx.strokeStyle = COL.slab; ctx.lineWidth = px; ctx.stroke(); drawOps++;
+            }
+            const top = mass.floors.length ? mass.floors[mass.floors.length - 1].footprint : null;
+            if (top) fillPolys([[[-6, 2], [2, 2], [2, 8], [-6, 8]]], COL.rooftop);
+            const hf = highlight != null && mass.floors[highlight - 1];
+            if (hf) {
+                ctx.beginPath(); polyPath(hf.footprint);
+                ctx.strokeStyle = COL.select; ctx.lineWidth = 3 * px; ctx.setLineDash([6 * px, 4 * px]); ctx.stroke(); ctx.setLineDash([]); drawOps++;
+            }
+        }
+
+        // night: dim ambient
+        if (sun && sun.altitude <= 0) {
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.fillStyle = 'rgba(16, 22, 34, 0.45)'; ctx.fillRect(0, 0, canvas.width, canvas.height); drawOps++;
+        }
+        lastDrawOps = drawOps;
+    }
+
+    function loop(t) {
+        raf = requestAnimationFrame(loop);
+        frames++;
+        if (t - fpsT >= 500) { fps = (frames * 1000) / (t - fpsT); frames = 0; fpsT = t; }
+        resize();
+        if (tween) {
+            const k = Math.min(1, (t - tween.t0) / tween.ms), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+            let dh = ((tween.to.heading - tween.from.heading + 540) % 360) - 180;
+            cam.heading = (tween.from.heading + dh * e + 360) % 360;
+            for (const key of ['scale', 'e', 'n']) cam[key] = tween.from[key] + (tween.to[key] - tween.from[key]) * e;
+            if (k >= 1) tween = null;
+            dirty = true;
+        }
+        if (dirty) {
+            dirty = false;
+            draw();
+            if (firstFrame) { const r = firstFrame; firstFrame = null; r(); }
+        }
+    }
+
+    // ---------- simple camera input: drag = rotate, right/Shift drag = pan, wheel = zoom ----------
+    let drag = null;
+    canvas.addEventListener('pointerdown', (e) => {
+        drag = { id: e.pointerId, x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey };
+        tween = null;
+    });
+    window.addEventListener('pointermove', (e) => {
+        if (!drag || e.pointerId !== drag.id) return;
+        const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+        drag.x = e.clientX; drag.y = e.clientY;
+        if (drag.pan) {
+            const a = screenToWorld(0, 0), b = screenToWorld(dx, dy);
+            cam.e -= b[0] - a[0]; cam.n -= b[1] - a[1];
+        } else {
+            cam.heading = (cam.heading - dx * 0.3 + 360) % 360;
+        }
+        dirty = true;
+    });
+    window.addEventListener('pointerup', (e) => { if (drag && e.pointerId === drag.id) drag = null; });
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        cam.scale = Math.min(30, Math.max(0.6, cam.scale * Math.exp(-e.deltaY * 0.0015)));
+        tween = null; dirty = true;
+    }, { passive: false });
+
+    const adapter = {
+        engineName: 'Mock Canvas2D',
+        engineVersion: '1.0',
+        async init() {
+            resize();
+            dirty = true;
+            const ready = new Promise((resolve) => { firstFrame = resolve; });
+            raf = requestAnimationFrame(loop);
+            await ready;
+        },
+        setMass(m) { mass = m; dirty = true; },
+        setSun(s) { sun = s; dirty = true; },
+        setView(name) {
+            const v = VIEWS[name];
+            if (!v) throw new Error('unknown view ' + name);
+            if (reduceMotion) { Object.assign(cam, v); tween = null; }
+            else tween = { from: Object.assign({}, cam), to: v, t0: performance.now(), ms: 600 };
+            dirty = true;
+        },
+        setLayer(name, visible) {
+            if (!(name in layers)) throw new Error('unknown layer ' + name);
+            layers[name] = !!visible; dirty = true;
+        },
+        setHighlight(level) { highlight = level == null ? null : level; dirty = true; },
+        screenToRay(clientX, clientY) {
+            const r = canvas.getBoundingClientRect();
+            const [e, n] = screenToWorld(clientX - r.left, clientY - r.top);
+            return { origin: [e, 1000, -n], dir: [0, -1, 0] };
+        },
+        cameraHeading() { return cam.heading; },
+        stats() { return { fps, drawCalls: lastDrawOps, triangles: null }; },
+        dispose() { cancelAnimationFrame(raf); },
+    };
+    return adapter;
+}
+
+</script>
+<script>startApp(createMockAdapter);</script>
