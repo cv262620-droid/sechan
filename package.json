@@ -12,6 +12,7 @@
     "babylonjs": "9.29.0",
     "maplibre-gl": "5.24.0",
     "playcanvas": "2.23.0",
-    "playwright": "1.56.1"
+    "playwright": "1.56.1",
+    "three": "0.186.1"
   }
 }
