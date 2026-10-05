@@ -1435,8 +1435,9 @@ function startApp(createAdapter) {
 // is cached on window so a second adapter (or a retry after dispose) reuses the same three instance.
 // SITE_CORE geometry is already in three's native frame (right-handed, Y-up, x = east, z = -north, CCW front
 // faces), so buffers go in unchanged.
-// Colour pipeline: ColorManagement on, so Color.setHex() linearises the spec's sRGB hex values (vertex colours
-// are linearised here by hand); lighting runs in linear space, NoToneMapping, outputColorSpace = sRGB. Light
+// Colour pipeline: hex and vertex colours are linearised here with a 2.2 power law and the patched shaders encode
+// with pow 1/2.2 (like PlayCanvas' gamma 2.2), so output = albedo x light level exactly as on the Babylon page;
+// lighting runs in linear space, NoToneMapping, outputColorSpace = sRGB (background / fog uniforms only). Light
 // levels reproduce the Babylon page's gamma-space model (hemisphere sky 0.70 / walls 0.60, sun
 // min(0.62, 0.32/sin alt)) exactly like the PlayCanvas page does; MeshLambertMaterial's BRDF is albedo/PI, so
 // every light carries intensity PI. Fog is patched to Babylon's linear *radial* fog (three: smoothstep on depth).
@@ -1473,9 +1474,13 @@ async function createThreeAdapter(canvas, core) {
         || Math.min(window.innerWidth || 1e4, window.innerHeight || 1e4) < 560;
 
     const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
-    // exact sRGB EOTF (what Color.setHex and the output encoding use)
-    const lin = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((Math.max(0, c) + 0.055) / 1.055, 2.4));
-    const srgbColor = (h) => new THREE.Color().setHex(parseInt(h.slice(1), 16)); // sRGB hex -> linear working space
+    // Pure 2.2 power law both ways (as on the PlayCanvas page), not three's piecewise sRGB curve: the Babylon page
+    // multiplies in gamma space (albedo x L), and pow(lin(a) x lin(L), 1/2.2) = a x L holds only for a power law.
+    // With the exact sRGB curve dark products (asphalt in shade, dusk) came out up to 6/255 darker.
+    // Output encoding: see GAMMA_OUT in the shader patch below. Background / fog colours bypass it (three converts
+    // those uniforms to sRGB itself), so they keep exact hex values.
+    const lin = (c) => Math.pow(Math.max(0, c), 2.2);
+    const srgbColor = (h) => new THREE.Color().setRGB(...hexRgb(h).map(lin)); // hex -> linear (2.2) working values
 
     // ---------- renderer / scene ----------
     const renderer = new THREE.WebGLRenderer({
@@ -1490,7 +1495,6 @@ async function createThreeAdapter(canvas, core) {
     renderer.setPixelRatio(dpr());
 
     const scene = new THREE.Scene();
-    scene.matrixWorldAutoUpdate = true;
     const SKY_DAY = hexRgb(COLORS.sky);
     scene.background = new THREE.Color().setRGB(...SKY_DAY, THREE.SRGBColorSpace);
     scene.fog = new THREE.Fog(scene.background.clone(), 320, 1320);
@@ -1499,7 +1503,10 @@ async function createThreeAdapter(canvas, core) {
     // is interpolated and its length taken per fragment: a per-vertex length() would interpolate wrongly across
     // the huge asphalt / platform triangles (hundreds of metres) and fog their middles. Same patch on every
     // material -> identical onBeforeCompile source -> shared program cache key.
+    // Also swaps the output encoding (linearToOutputTexel = exact sRGB OETF) for pow 1/2.2, the inverse of lin().
+    const GAMMA_OUT = 'gl_FragColor.rgb = pow( max( gl_FragColor.rgb, vec3( 0.0 ) ), vec3( 1.0 / 2.2 ) );';
     function linearRadialFog(shader) {
+        shader.fragmentShader = shader.fragmentShader.replace('#include <colorspace_fragment>', GAMMA_OUT);
         shader.vertexShader = shader.vertexShader
             .replace('#include <fog_pars_vertex>', '#include <fog_pars_vertex>\n#ifdef USE_FOG\n\tvarying vec3 vFogViewPos;\n#endif')
             .replace('#include <fog_vertex>', '#include <fog_vertex>\n#ifdef USE_FOG\n\tvFogViewPos = mvPosition.xyz;\n#endif');
@@ -1566,7 +1573,6 @@ async function createThreeAdapter(canvas, core) {
     const mapSize = Math.min(caps, smallScreen() ? 2048 : 4096);
     sun.shadow.mapSize.set(mapSize, mapSize);
     sun.shadow.radius = 1.5;               // Vogel-disk radius in texels (soft PCF edge)
-    sun.shadow.autoUpdate = true;          // renderer.shadowMap.autoUpdate = false gates the redraws
     scene.add(sun);
     scene.add(sun.target);
 
@@ -1588,7 +1594,6 @@ async function createThreeAdapter(canvas, core) {
         geo.computeBoundingSphere();
         return geo;
     }
-    const staticObjects = [];
     function addObject(obj, opts) {
         const o = opts || {};
         obj.castShadow = !!o.cast;
@@ -1596,7 +1601,6 @@ async function createThreeAdapter(canvas, core) {
         obj.matrixAutoUpdate = false;  // static: identity world matrix, never recomputed
         obj.updateMatrix();
         scene.add(obj);
-        staticObjects.push(obj);
         return obj;
     }
 
@@ -1642,7 +1646,6 @@ async function createThreeAdapter(canvas, core) {
     const layers = { context: [], trees: [], terrain: [] };
     let shadowsOn = true, sunUp = true;
     let massMesh = null, massBase = null, massRanges = null, currentMass = null, highlightLevel = null;
-    let parcelLines = null;
     const refreshShadows = () => { renderer.shadowMap.needsUpdate = true; };
 
     // ---------- planned building: one mesh, per-vertex (linear) colours; highlight = colour-buffer update ----------
@@ -1826,7 +1829,7 @@ async function createThreeAdapter(canvas, core) {
         sunUp = alt > 0;
         _sunDir.set(v[0], v[1], v[2]).normalize();
         // Same gamma-space model as the Babylon page, converted so the *rendered* colours match (as on the
-        // PlayCanvas page): Babylon shows albedo_srgb x L_gamma; here output = srgb(albedo_lin x L_lin), so L_lin = lin(L_gamma).
+        // PlayCanvas page): Babylon shows albedo_srgb x L_gamma; here output = (albedo_lin x L_lin)^(1/2.2), so L_lin = L_gamma^2.2.
         const day = clamp(alt / 6, 0, 1);                        // fade in over the first 6 degrees
         const warm = clamp((alt - 2) / 20, 0, 1);                 // 0 = horizon (warm), 1 = high sun (neutral)
         const tint = [1.0, 0.80 + 0.17 * warm, 0.62 + 0.30 * warm];
@@ -1845,7 +1848,7 @@ async function createThreeAdapter(canvas, core) {
         scene.background.setRGB(...SKY_DAY.map((c) => c * sk), THREE.SRGBColorSpace);
         scene.fog.color.copy(scene.background);
         // unlit parcel lines dim with the sky light
-        parcelMat.color.setRGB(...hexRgb(COLORS.parcel).map((c) => c * (0.45 + 0.55 * k)), THREE.SRGBColorSpace);
+        parcelMat.color.setRGB(...hexRgb(COLORS.parcel).map((c) => lin(c * (0.45 + 0.55 * k))));
         if (sunUp) fitShadowCamera();
         applyShadowState();
     }
@@ -1857,13 +1860,25 @@ async function createThreeAdapter(canvas, core) {
     const goal = Object.assign({}, cur);
     let tween = null;
 
+    // Ground height the camera must stay above (same rule as the other pages). The terrain mesh is a 25 m grid
+    // (core terrainGeometry: half 1100, step 25, centre e 20 / n 6) whose flat triangles sit up to ~6 m above the
+    // analytic core.terrainHeight between grid points, so take the highest corner of the grid cell under (e, n).
+    function groundUnder(e, n) {
+        const G = 25, E0 = 20 - 1100, N0 = 6 - 1100;
+        const i = Math.floor((e - E0) / G), j = Math.floor((n - N0) / G);
+        let h = core.terrainHeight(e, n);
+        for (let di = 0; di <= 1; di++) for (let dj = 0; dj <= 1; dj++) h = Math.max(h, core.terrainHeight(E0 + (i + di) * G, N0 + (j + dj) * G));
+        return h;
+    }
+    function eyeFloor(s) {
+        const ce = Math.cos(Math.max(s.el, 0) * DEG);
+        const camE = s.tx + s.dist * Math.sin(s.az * DEG) * ce, camN = -(s.tz - s.dist * Math.cos(s.az * DEG) * ce);
+        return Math.max(EYE_MIN_Y, groundUnder(camE, camN) + EYE_MIN_Y);
+    }
     function minElevation(s) {
         // allow looking up from below the target only while the eye stays above EYE_MIN_Y over the
         // ground under the camera (the outer terrain rises into hills beyond the city blocks)
-        const ce = Math.cos(Math.max(s.el, 0) * DEG);
-        const camE = s.tx + s.dist * Math.sin(s.az * DEG) * ce, camN = -(s.tz - s.dist * Math.cos(s.az * DEG) * ce);
-        const floorY = Math.max(EYE_MIN_Y, core.terrainHeight(camE, camN) + EYE_MIN_Y);
-        const sEye = clamp((floorY - s.ty) / Math.max(s.dist, 1e-3), -1, 1);
+        const sEye = clamp((eyeFloor(s) - s.ty) / Math.max(s.dist, 1e-3), -1, 1);
         return Math.max(Math.min(EL_MIN, Math.max(-60, Math.asin(sEye) / DEG)), Math.asin(sEye) / DEG);
     }
     function constrain(s) {
@@ -1872,6 +1887,10 @@ async function createThreeAdapter(canvas, core) {
         s.tx = clamp(s.tx, -1000, 1000);
         s.tz = clamp(s.tz, -1000, 1000);
         s.el = clamp(s.el, minElevation(s), EL_MAX);
+        // target panned out under a hill deeper than the orbit distance: even looking straight down the eye would
+        // sit inside the hill, so back the eye out instead (zoom-in stops at the hillside)
+        const floorY = eyeFloor(s), sinEl = Math.sin(s.el * DEG);
+        if (sinEl > 0.5 && s.ty + s.dist * sinEl < floorY) s.dist = Math.min(DIST_MAX, (floorY - s.ty) / sinEl + 0.01);
         return keepOutOfMass(s);
     }
 
@@ -2130,8 +2149,7 @@ async function createThreeAdapter(canvas, core) {
             const lgeo = new THREE.BufferGeometry();
             lgeo.setAttribute('position', new THREE.BufferAttribute(lp, 3));
             lgeo.computeBoundingSphere();
-            parcelLines = addObject(new THREE.LineSegments(lgeo, parcelMat), {});
-            parcelLines.name = 'parcelLines';
+            addObject(new THREE.LineSegments(lgeo, parcelMat), {}).name = 'parcelLines';
             shadowPts = collectShadowPoints(ctx);
 
             // default sun + mass so every shader variant exists before the first frame
